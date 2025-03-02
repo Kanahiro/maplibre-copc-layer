@@ -28,9 +28,6 @@ const map = new Map({
 				source: 'osm',
 			},
 		],
-		terrain: {
-			source: 'dem',
-		},
 	},
 	center: [139.04979382895846, 35.79193396826148],
 	zoom: 10,
@@ -46,9 +43,11 @@ map.on('load', () => {
 
 const parameters = {
 	pointSize: 6,
-	colorMode: 'height',
+	colorMode: 'rgb',
 	maxCacheSize: 100,
 	sseThreshold: 4,
+	sizeAttenuation: false,
+	depthTest: true,
 };
 
 function loadThreeLayerFromUrlParams() {
@@ -64,6 +63,8 @@ function loadThreeLayerFromUrlParams() {
 			colorMode: parameters.colorMode,
 			pointSize: parameters.pointSize,
 			sseThreshold: parameters.sseThreshold,
+			pointSizeAttenuation: parameters.sizeAttenuation,
+			depthTest: parameters.depthTest,
 		});
 		map.addLayer(customLayer);
 	}
@@ -75,15 +76,57 @@ const gui = new GUI({
 	width: 400,
 });
 
-// control parameters for the ThreeLayer
-gui.add(parameters, 'pointSize', 1, 10, 1).onChange((value: number) => {
+// Create folders for different categories
+const pointsFolder = gui.addFolder('Point Settings');
+const renderingFolder = gui.addFolder('Rendering Options');
+const performanceFolder = gui.addFolder('Performance');
+
+// Point appearance controls
+pointsFolder.add(parameters, 'pointSize', 1, 20, 1).onChange((value: number) => {
 	if (customLayer) {
 		customLayer.setPointSize(value);
 	}
 });
 
-gui.add(parameters, 'sseThreshold', 1, 10, 1).onChange((value: number) => {
+pointsFolder.add(parameters, 'colorMode', ['rgb', 'height', 'intensity', 'white']).onChange((value: string) => {
+	if (customLayer) {
+		// Need to recreate the layer with the new color mode
+		const currentLayer = customLayer;
+		map.removeLayer(currentLayer.id);
+		
+		customLayer = new ThreeLayer(currentLayer.url, {
+			maxCacheSize: parameters.maxCacheSize,
+			colorMode: value as 'rgb' | 'height' | 'intensity' | 'white',
+			pointSize: parameters.pointSize,
+			sseThreshold: parameters.sseThreshold,
+			pointSizeAttenuation: parameters.sizeAttenuation,
+			depthTest: parameters.depthTest,
+		});
+		
+		map.addLayer(customLayer);
+	}
+});
+
+// Rendering options
+renderingFolder.add(parameters, 'sizeAttenuation').name('Size Attenuation').onChange((value: boolean) => {
+	if (customLayer) {
+		customLayer.toggleSizeAttenuation(value);
+	}
+});
+
+renderingFolder.add(parameters, 'depthTest').name('Depth Test').onChange((value: boolean) => {
+	if (customLayer) {
+		customLayer.toggleDepthTest(value);
+	}
+});
+
+// Performance settings
+performanceFolder.add(parameters, 'sseThreshold', 1, 10, 1).name('SSE Threshold').onChange((value: number) => {
 	if (customLayer) {
 		customLayer.setSseThreshold(value);
 	}
 });
+
+// Open folders by default
+pointsFolder.open();
+renderingFolder.open();

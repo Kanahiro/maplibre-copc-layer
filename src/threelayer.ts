@@ -12,29 +12,30 @@ export interface ThreeLayerOptions {
 	colorMode?: 'rgb' | 'height' | 'intensity' | 'white';
 	maxCacheSize?: number; // Maximum number of nodes to keep in cache
 	sseThreshold?: number;
+	depthTest?: boolean; // Whether to enable depth testing
 }
 
 export class ThreeLayer implements CustomLayerInterface {
 	id: string;
-	type: 'custom';
-	renderingMode: '3d';
+	type: string;
+	renderingMode: string;
 	url: string;
+	map?: MapLibre;
+	camera: THREE.Camera;
+	scene: THREE.Scene;
+	renderer?: THREE.WebGLRenderer;
+	worker: Worker;
+	pointsMap: Record<string, THREE.Points> = {};
+	pointSize: number;
+	pointSizeAttenuation: boolean;
+	depthTest: boolean;
 	options: ThreeLayerOptions;
 
-	private camera: THREE.Camera;
-	private scene: THREE.Scene;
-	private renderer?: THREE.WebGLRenderer;
-	private map?: MapLibre;
-	private worker: Worker;
-
 	private sseThreshold: number;
-	private pointsMap: Record<string, THREE.Points> = {};
-	private pointSize: number;
-	private pointSizeAttenuation: boolean;
-	private workerInitialized: boolean = false;
 	private visibleNodes: string[] = [];
 	private pointCache: Map<string, THREE.Points> = new Map(); // Cache for removed points
 	private maxCacheSize: number = 100; // Maximum number of nodes to keep in cache
+	private workerInitialized: boolean = false;
 
 	constructor(url: string, options: ThreeLayerOptions = {}) {
 		this.id = 'three_layer';
@@ -51,6 +52,7 @@ export class ThreeLayer implements CustomLayerInterface {
 				? options.pointSizeAttenuation
 				: false;
 		this.maxCacheSize = options.maxCacheSize ?? 100;
+		this.depthTest = options.depthTest ?? true;
 
 		this.camera = new THREE.Camera();
 		this.scene = new THREE.Scene();
@@ -208,6 +210,23 @@ export class ThreeLayer implements CustomLayerInterface {
 		}
 	}
 
+	public toggleDepthTest(enabled: boolean) {
+		this.depthTest = enabled;
+
+		// Update all existing points
+		Object.values(this.pointsMap).forEach((points) => {
+			if (points.material instanceof THREE.PointsMaterial) {
+				points.material.depthTest = enabled;
+				points.material.depthWrite = enabled;
+				points.material.needsUpdate = true;
+			}
+		});
+
+		if (this.map) {
+			this.map.triggerRepaint();
+		}
+	}
+
 	private updatePoints() {
 		if (!this.map || !this.workerInitialized) return;
 
@@ -226,16 +245,20 @@ export class ThreeLayer implements CustomLayerInterface {
 	}
 
 	render(gl: WebGLRenderingContext, options: CustomRenderMethodInput) {
+		const { transform } = options;
+		
 		if (!this.map || !this.renderer) return;
 
+		// Update camera projection matrix from map transform
 		const m = new THREE.Matrix4().fromArray(
 			options.defaultProjectionData.mainMatrix,
 		);
-
 		this.camera.projectionMatrix = m;
 
+		// Update scene based on camera position
 		this.updatePoints();
 
+		// Render the scene
 		this.renderer.resetState();
 		this.renderer.render(this.scene, this.camera);
 
@@ -312,20 +335,20 @@ export class ThreeLayer implements CustomLayerInterface {
 		}
 	}
 
-	private createPointMaterial(): THREE.PointsMaterial {
+	private createPointMaterial(): THREE.Material {
+		// Create base material
 		const material = new THREE.PointsMaterial({
 			vertexColors: this.options.colorMode !== 'white',
 			size: this.pointSize,
 			sizeAttenuation: this.pointSizeAttenuation,
+			depthTest: this.depthTest,
+			depthWrite: this.depthTest,
 		});
 
 		// If color mode is white, set the color directly
 		if (this.options.colorMode === 'white') {
 			material.color.set(0xffffff);
 		}
-
-		// Disable depth test for better blending
-		material.depthTest = false;
 
 		return material;
 	}
