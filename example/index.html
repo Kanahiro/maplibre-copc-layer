@@ -7,7 +7,12 @@
 		<title>Vite + TS</title>
 	</head>
 	<body>
-		<div id="app" style="height: 100vh"></div>
-		<script type="module" src="/src/main.ts"></script>
+		<div id="app" style="height: 100vh">
+			<div
+				id="gui"
+				style="position: absolute; z-index: 10; left: 10px; top: 10px"
+			></div>
+		</div>
+		<script type="module" src="./main.ts"></script>
 	</body>
 </html>

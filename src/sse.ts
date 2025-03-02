@@ -1,4 +1,4 @@
-import { Camera, Vector3 } from 'three';
+import { Vector3 } from 'three';
 
 /**
  * Calculates the Screen Space Error (SSE) for a point cloud node.

@@ -11,6 +11,7 @@
   "devDependencies": {
     "@types/proj4": "^2.5.6",
     "@types/three": "^0.173.0",
+    "lil-gui": "^0.20.0",
     "maplibre-gl": "^5.1.1",
     "proj4": "^2.15.0",
     "proj4js": "^10.0.0",

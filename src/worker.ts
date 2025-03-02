@@ -160,21 +160,16 @@ async function loadNode(node: string) {
 			const colors: Float32Array = new Float32Array(targetNode.pointCount * 3);
 
 			const view = await Copc.loadPointDataView(url, copc, nodes[node]);
-			const getters = ['X', 'Y', 'Z'].map(view.getter);
 
-			// Try to get RGB colors if available and requested
-			const hasRgb = true;
-			const colorGetters =
-				colorMode === 'rgb' && hasRgb
-					? ['Red', 'Green', 'Blue'].map(view.getter)
-					: null;
-
-			// Try to get intensity if requested
-			const hasIntensity = false;
-			const intensityGetter = hasIntensity ? view.getter('Intensity') : null;
+			const hasRgb =
+				view.dimensions['Red'] &&
+				view.dimensions['Green'] &&
+				view.dimensions['Blue'];
+			const hasIntensity = view.dimensions['Intensity'];
 
 			for (let i = 0; i < targetNode.pointCount; i++) {
-				const point = getPoint(getters, i);
+				const xyzGetters = ['X', 'Y', 'Z'].map(view.getter);
+				const point = getPoint(xyzGetters, i);
 				const [lon, lat] = proj.inverse([point[0], point[1]]);
 				const merc = MercatorCoordinate.fromLngLat(
 					{ lng: lon, lat: lat },
@@ -185,7 +180,8 @@ async function loadNode(node: string) {
 				positions[i * 3 + 1] = merc.y;
 				positions[i * 3 + 2] = merc.z;
 
-				if (colorMode === 'rgb' && colorGetters) {
+				if (colorMode === 'rgb' && hasRgb) {
+					const colorGetters = ['Red', 'Green', 'Blue'].map(view.getter);
 					// Use RGB values if available and requested
 					const rgb = getPoint(colorGetters, i);
 					colors[i * 3] = rgb[0] / 65535;
@@ -213,7 +209,8 @@ async function loadNode(node: string) {
 						1,
 						Math.max(0, 1 - normalizedHeight * 2),
 					); // Blue
-				} else if (colorMode === 'intensity' && intensityGetter) {
+				} else if (colorMode === 'intensity' && hasIntensity) {
+					const intensityGetter = view.getter('Intensity');
 					// Color by intensity if available
 					const intensity = intensityGetter(i) / 65535; // Normalize to 0-1
 					colors[i * 3] = intensity;

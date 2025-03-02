@@ -24,6 +24,9 @@ importers:
       '@types/three':
         specifier: ^0.173.0
         version: 0.173.0
+      lil-gui:
+        specifier: ^0.20.0
+        version: 0.20.0
       maplibre-gl:
         specifier: ^5.1.1
         version: 5.1.1
@@ -416,6 +419,9 @@ packages:
 
   laz-perf@0.0.7:
     resolution: {integrity: sha512-2xRqm/f/2UqDS5qqkjOyDb6uVIjkVw6SGmQlMoTQliVWkZhPfIbUJTubUl3mTloaWqKcjlS/urmP1CYoxelsEg==}
+
+  lil-gui@0.20.0:
+    resolution: {integrity: sha512-k7Ipr0ztqslMA2XvM5z5ZaWhxQtnEOwJBfI/hmSuRh6q4iMG9L0boqqrnZSzBR1jzyJ28OMl47l65ILzRe1TdA==}
 
   maplibre-gl-gsi-terrain@2.2.0:
     resolution: {integrity: sha512-uS4heUxOdEOuWqUD9RFo5p5fsuVwSylgKjXlBQGkFlySQOfxDUFF8xuFmHFTdCutEESu8xz+OUjnfD3YvNairg==}
@@ -843,6 +849,8 @@ snapshots:
   kind-of@6.0.3: {}
 
   laz-perf@0.0.7: {}
+
+  lil-gui@0.20.0: {}
 
   maplibre-gl-gsi-terrain@2.2.0: {}
 

@@ -119,7 +119,7 @@ export class ThreeLayer implements CustomLayerInterface {
 
 		// re-add
 		this.visibleNodes.forEach((n) => {
-			this.scene.add(this.pointsMap[n]);
+			if (this.pointsMap[n]) this.scene.add(this.pointsMap[n]);
 		});
 	}
 
@@ -175,6 +175,16 @@ export class ThreeLayer implements CustomLayerInterface {
 				points.material.needsUpdate = true;
 			}
 		});
+
+		if (this.map) {
+			this.map.triggerRepaint();
+		}
+	}
+
+	public setSseThreshold(threshold: number) {
+		this.sseThreshold = threshold;
+
+		this.updatePoints();
 
 		if (this.map) {
 			this.map.triggerRepaint();
