@@ -111,8 +111,8 @@ async function initCopc(url: string) {
 		);
 
 		nodes = loadedNodes;
-		nodeCenters = Object.entries(nodes).reduce((curr, [k, v]) => {
-			const center = calcCubeCenter(copc.info.cube, k);
+		nodeCenters = Object.entries(nodes).reduce((curr, [k, _]) => {
+			const center = calcCubeCenter(copc!.info.cube, k);
 			return {
 				...curr,
 				[k]: center,
@@ -159,7 +159,7 @@ async function loadNode(node: string) {
 			);
 			const colors: Float32Array = new Float32Array(targetNode.pointCount * 3);
 
-			const view = await Copc.loadPointDataView(url, copc, nodes[node]);
+			const view = await Copc.loadPointDataView(url, copc, nodes[node]!);
 
 			const hasRgb =
 				view.dimensions['Red'] &&
@@ -286,7 +286,7 @@ function updatePoints(
 				cameraVector,
 				nodeCenter,
 				fov,
-				copc.info.spacing * Math.pow(0.5, depth), // 1/1, 1/2, 1/4, 1/8, ...
+				copc!.info.spacing * Math.pow(0.5, depth), // 1/1, 1/2, 1/4, 1/8, ...
 				mapHeight,
 				distanceFactor,
 			);

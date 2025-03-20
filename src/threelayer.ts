@@ -17,8 +17,8 @@ export interface ThreeLayerOptions {
 
 export class ThreeLayer implements CustomLayerInterface {
 	id: string;
-	type: string;
-	renderingMode: string;
+	type: 'custom';
+	renderingMode: '3d';
 	url: string;
 	map?: MapLibre;
 	camera: THREE.Camera;
@@ -58,7 +58,7 @@ export class ThreeLayer implements CustomLayerInterface {
 		this.scene = new THREE.Scene();
 
 		// Initialize the worker
-		this.worker = new Worker(new URL('./worker.ts', import.meta.url), {
+		this.worker = new Worker(new URL('./worker/index.ts', import.meta.url), {
 			type: 'module',
 		});
 		this.setupWorkerMessageHandlers();
@@ -244,9 +244,7 @@ export class ThreeLayer implements CustomLayerInterface {
 		});
 	}
 
-	render(gl: WebGLRenderingContext, options: CustomRenderMethodInput) {
-		const { transform } = options;
-		
+	render(_: WebGLRenderingContext, options: CustomRenderMethodInput) {
 		if (!this.map || !this.renderer) return;
 
 		// Update camera projection matrix from map transform
@@ -266,7 +264,7 @@ export class ThreeLayer implements CustomLayerInterface {
 	}
 
 	// Clean up resources when layer is removed
-	onRemove(map: MapLibre, gl: WebGLRenderingContext) {
+	onRemove(_: MapLibre, __: WebGLRenderingContext) {
 		// Terminate the worker
 		this.worker.terminate();
 
