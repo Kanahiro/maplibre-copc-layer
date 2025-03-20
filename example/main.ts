@@ -82,50 +82,63 @@ const renderingFolder = gui.addFolder('Rendering Options');
 const performanceFolder = gui.addFolder('Performance');
 
 // Point appearance controls
-pointsFolder.add(parameters, 'pointSize', 1, 20, 1).onChange((value: number) => {
-	if (customLayer) {
-		customLayer.setPointSize(value);
-	}
-});
+pointsFolder
+	.add(parameters, 'pointSize', 1, 20, 1)
+	.onChange((value: number) => {
+		if (customLayer) {
+			customLayer.setPointSize(value);
+		}
+	});
 
-pointsFolder.add(parameters, 'colorMode', ['rgb', 'height', 'intensity', 'white']).onChange((value: string) => {
-	if (customLayer) {
-		// Need to recreate the layer with the new color mode
-		const currentLayer = customLayer;
-		map.removeLayer(currentLayer.id);
-		
-		customLayer = new ThreeLayer(currentLayer.url, {
-			maxCacheSize: parameters.maxCacheSize,
-			colorMode: value as 'rgb' | 'height' | 'intensity' | 'white',
-			pointSize: parameters.pointSize,
-			sseThreshold: parameters.sseThreshold,
-			pointSizeAttenuation: parameters.sizeAttenuation,
-			depthTest: parameters.depthTest,
-		});
-		
-		map.addLayer(customLayer);
-	}
-});
+pointsFolder
+	.add(parameters, 'colorMode', ['rgb', 'height', 'intensity', 'white'])
+	.onChange((value: string) => {
+		if (customLayer) {
+			// Need to recreate the layer with the new color mode
+			const currentLayer = customLayer;
+			map.removeLayer(currentLayer.id);
+
+			customLayer = new ThreeLayer(currentLayer.url, {
+				maxCacheSize: parameters.maxCacheSize,
+				colorMode: value as 'rgb' | 'height' | 'intensity' | 'white',
+				pointSize: parameters.pointSize,
+				sseThreshold: parameters.sseThreshold,
+				pointSizeAttenuation: parameters.sizeAttenuation,
+				depthTest: parameters.depthTest,
+			});
+
+			map.addLayer(customLayer);
+		}
+	});
 
 // Rendering options
-renderingFolder.add(parameters, 'sizeAttenuation').name('Size Attenuation').onChange((value: boolean) => {
-	if (customLayer) {
-		customLayer.toggleSizeAttenuation(value);
-	}
-});
+renderingFolder
+	.add(parameters, 'sizeAttenuation')
+	.name('Size Attenuation')
+	.onChange((value: boolean) => {
+		if (customLayer) {
+			customLayer.toggleSizeAttenuation(value);
+		}
+	});
 
-renderingFolder.add(parameters, 'depthTest').name('Depth Test').onChange((value: boolean) => {
-	if (customLayer) {
-		customLayer.toggleDepthTest(value);
-	}
-});
+renderingFolder
+	.add(parameters, 'depthTest')
+	.name('Depth Test')
+	.onChange((value: boolean) => {
+		if (customLayer) {
+			customLayer.toggleDepthTest(value);
+		}
+	});
 
 // Performance settings
-performanceFolder.add(parameters, 'sseThreshold', 1, 10, 1).name('SSE Threshold').onChange((value: number) => {
-	if (customLayer) {
-		customLayer.setSseThreshold(value);
-	}
-});
+performanceFolder
+	.add(parameters, 'sseThreshold', 1, 10, 1)
+	.name('SSE Threshold')
+	.onChange((value: number) => {
+		if (customLayer) {
+			customLayer.setSseThreshold(value);
+		}
+	});
 
 // Open folders by default
 pointsFolder.open();
