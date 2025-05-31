@@ -4,6 +4,7 @@ import {
 	Map as MapLibre,
 } from 'maplibre-gl';
 import * as THREE from 'three';
+import { CacheManager, CachedNodeData, CacheStats } from './cache-manager';
 
 /**
  * Color modes available for point cloud rendering
@@ -24,6 +25,10 @@ export interface CopcLayerOptions {
 	sseThreshold?: number;
 	/** Whether to enable depth testing (default: true) */
 	depthTest?: boolean;
+	/** Maximum cache memory usage in bytes (default: 100MB) */
+	maxCacheMemory?: number;
+	/** Enable cache logging for debugging (default: false) */
+	enableCacheLogging?: boolean;
 }
 
 /**
@@ -35,25 +40,48 @@ const DEFAULT_OPTIONS: Required<CopcLayerOptions> = {
 	maxCacheSize: 100,
 	sseThreshold: 8,
 	depthTest: true,
+	maxCacheMemory: 100 * 1024 * 1024, // 100MB
+	enableCacheLogging: false,
 } as const;
+
+/**
+ * Extended node statistics including cache performance
+ */
+export interface NodeStats {
+	/** Number of nodes currently loaded and ready for rendering */
+	loaded: number;
+	/** Number of nodes currently visible based on LOD */
+	visible: number;
+	/** Number of nodes cached for reuse */
+	cached: number;
+	/** Cache hit ratio (0-1) */
+	cacheHitRatio: number;
+	/** Cache memory usage in bytes */
+	cacheMemoryUsage: number;
+	/** Number of pending worker requests */
+	pendingRequests: number;
+}
 
 /**
  * A custom MapLibre layer for rendering Cloud-Optimized Point Cloud (COPC) data using Three.js
  *
- * This layer provides efficient rendering of large point cloud datasets by:
- * - Using web workers for data processing
- * - Implementing screen space error (SSE) based level-of-detail
- * - Caching loaded nodes for performance
- * - Supporting multiple color modes
+ * Features advanced caching system on main thread to minimize worker communication:
+ * - LRU-based cache management
+ * - Memory usage monitoring
+ * - Cache hit/miss analytics
+ * - Optimized Three.js object reuse
+ * - Efficient SSE-based level-of-detail
  *
  * @example
  * ```typescript
- * import { ThreeLayer } from 'copc-viewer';
+ * import { CopcLayer } from 'maplibre-copc-layer';
  *
- * const layer = new ThreeLayer('https://example.com/data.copc.laz', {
+ * const layer = new CopcLayer('https://example.com/data.copc.laz', {
  *   pointSize: 8,
  *   colorMode: 'height',
- *   sseThreshold: 4
+ *   sseThreshold: 4,
+ *   maxCacheSize: 200,
+ *   maxCacheMemory: 200 * 1024 * 1024 // 200MB
  * });
  *
  * map.addLayer(layer);
@@ -79,23 +107,24 @@ export class CopcLayer implements CustomLayerInterface {
 	public renderer?: THREE.WebGLRenderer;
 	/** Web worker for processing COPC data */
 	public readonly worker: Worker;
+	/** Cache manager for efficient data reuse */
+	public readonly cacheManager: CacheManager;
 
-	/** Map of node IDs to Three.js Points objects */
-	private readonly pointsMap: Record<string, THREE.Points> = {};
 	/** Current configuration options */
 	private readonly options: Required<CopcLayerOptions>;
-
 	/** Current SSE threshold */
 	private sseThreshold: number;
 	/** List of currently visible node IDs */
 	private visibleNodes: string[] = [];
-	/** Cache for removed points to avoid recreation */
-	private readonly pointCache: Map<string, THREE.Points> = new Map();
 	/** Whether the worker has been initialized */
 	private workerInitialized: boolean = false;
+	/** Set of nodes currently being requested from worker */
+	private pendingRequests: Set<string> = new Set();
+	/** Request queue to track load order */
+	private requestQueue: string[] = [];
 
 	/**
-	 * Creates a new ThreeLayer instance
+	 * Creates a new CopcLayer instance
 	 *
 	 * @param url - URL to the COPC file to load
 	 * @param options - Configuration options for the layer
@@ -118,8 +147,14 @@ export class CopcLayer implements CustomLayerInterface {
 			...DEFAULT_OPTIONS,
 			...options,
 		};
-		this.sseThreshold =
-			this.options.sseThreshold ?? DEFAULT_OPTIONS.sseThreshold;
+		this.sseThreshold = this.options.sseThreshold;
+
+		// Initialize cache manager
+		this.cacheManager = new CacheManager({
+			maxNodes: this.options.maxCacheSize,
+			maxMemoryBytes: this.options.maxCacheMemory,
+			enableLogging: this.options.enableCacheLogging,
+		});
 
 		this.camera = new THREE.Camera();
 		this.scene = new THREE.Scene();
@@ -139,6 +174,9 @@ export class CopcLayer implements CustomLayerInterface {
 		}
 	}
 
+	/**
+	 * Setup worker message handling for cache-optimized data loading
+	 */
 	private setupWorkerMessageHandlers() {
 		this.worker.onmessage = (event) => {
 			const message = event.data;
@@ -147,31 +185,25 @@ export class CopcLayer implements CustomLayerInterface {
 				case 'initialized':
 					// Worker has initialized COPC data
 					this.workerInitialized = true;
-					this.worker.postMessage({ type: 'loadNode', node: '0-0-0-0' });
+					this.requestNodeData('0-0-0-0'); // Request root node
 					this.map?.panTo(message.center);
 					break;
+
 				case 'nodeLoaded':
-					// Node data loaded, create THREE.Points and add to scene if needed
-					if (!message.alreadyLoaded) {
-						// Create new points from the data
-						this.createPoints(message.node, message.positions, message.colors);
-					}
-					this.updateScene();
+					// Node data loaded from worker
+					this.handleNodeLoaded(
+						message.node,
+						message.positions,
+						message.colors,
+					);
 					break;
+
 				case 'nodesToLoad':
-					// Update scene with the new maximum depth
+					// Update visible nodes and request missing data
 					this.visibleNodes = message.nodes;
-					this.updateScene();
-
-					// Load one node at a time to avoid overwhelming the worker
-					this.visibleNodes.forEach((node) => {
-						this.worker.postMessage({
-							type: 'loadNode',
-							node,
-						});
-					});
-
+					this.updateVisibleNodes();
 					break;
+
 				case 'error':
 					console.error('Worker error:', message.message);
 					break;
@@ -187,45 +219,157 @@ export class CopcLayer implements CustomLayerInterface {
 		};
 	}
 
-	private updateScene() {
-		// Prune cache if necessary
-		this.pruneCache();
-
-		// Remove ALL points from the scene
-		this.scene.children.forEach((c) => this.scene.remove(c));
-
-		// re-add
-		this.visibleNodes.forEach((n) => {
-			if (this.pointsMap[n]) this.scene.add(this.pointsMap[n]);
-		});
-	}
-
-	private createPoints(
-		node: string,
+	/**
+	 * Handle node data received from worker and update cache
+	 */
+	private handleNodeLoaded(
+		nodeId: string,
 		positionsBuffer: ArrayBuffer,
 		colorsBuffer: ArrayBuffer,
-	) {
+	): void {
+		// Remove from pending requests
+		this.pendingRequests.delete(nodeId);
+		this.removeFromRequestQueue(nodeId);
+
+		// Convert to typed arrays
 		const positions = new Float32Array(positionsBuffer);
 		const colors = new Float32Array(colorsBuffer);
 
-		// Create geometry and add attributes
+		// Create material configuration for caching
+		const materialConfig = {
+			colorMode: this.options.colorMode,
+			pointSize: this.options.pointSize,
+			depthTest: this.options.depthTest,
+		};
+
+		// Create cached node data
+		const nodeData = CacheManager.createNodeData(
+			nodeId,
+			positions,
+			colors,
+			materialConfig,
+		);
+
+		// Create Three.js geometry and points object
 		const geometry = new THREE.BufferGeometry();
 		geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 		geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
-		// Create material with appropriate settings
 		const material = this.createPointMaterial();
+		const points = new THREE.Points(geometry, material);
 
-		// Create the points object and add to pointsMap
-		this.pointsMap[node] = new THREE.Points(geometry, material);
+		// Store Three.js objects in cache
+		nodeData.geometry = geometry;
+		nodeData.points = points;
+
+		// Add to cache
+		this.cacheManager.set(nodeData);
+
+		// Log cache performance for debugging
+		if (this.options.enableCacheLogging) {
+			const stats = this.cacheManager.getStats();
+			console.log(
+				`Node ${nodeId} cached. Hit ratio: ${(stats.hitRatio * 100).toFixed(1)}%, Memory: ${this.formatBytes(stats.memoryUsage)}`,
+			);
+		}
+	}
+
+	/**
+	 * Update the scene with visible nodes, using cache when possible
+	 */
+	private updateVisibleNodes(): void {
+		// Clear scene
+		this.scene.children.forEach((child) => this.scene.remove(child));
+
+		// Track which nodes need to be requested
+		const nodesToRequest: string[] = [];
+
+		for (const nodeId of this.visibleNodes) {
+			const cachedData = this.cacheManager.get(nodeId);
+
+			if (cachedData && cachedData.points) {
+				// Cache hit - add to scene immediately
+				this.scene.add(cachedData.points);
+
+				// Update material if configuration changed
+				if (this.needsMaterialUpdate(cachedData)) {
+					this.updateNodeMaterial(cachedData);
+				}
+			} else if (!this.pendingRequests.has(nodeId)) {
+				// Cache miss - need to request from worker
+				nodesToRequest.push(nodeId);
+			}
+		}
+
+		// Request missing nodes from worker
+		nodesToRequest.forEach((nodeId) => {
+			this.requestNodeData(nodeId);
+		});
+	}
+
+	/**
+	 * Request node data from worker with queue management
+	 */
+	private requestNodeData(nodeId: string): void {
+		if (this.pendingRequests.has(nodeId)) {
+			return; // Already requested
+		}
+
+		this.pendingRequests.add(nodeId);
+		this.requestQueue.push(nodeId);
+
+		this.worker.postMessage({
+			type: 'loadNode',
+			node: nodeId,
+		});
+	}
+
+	/**
+	 * Check if node material needs updating due to configuration changes
+	 */
+	private needsMaterialUpdate(nodeData: CachedNodeData): boolean {
+		const current = nodeData.materialConfig;
+		return (
+			current.colorMode !== this.options.colorMode ||
+			current.pointSize !== this.options.pointSize ||
+			current.depthTest !== this.options.depthTest
+		);
+	}
+
+	/**
+	 * Update node material with current configuration
+	 */
+	private updateNodeMaterial(nodeData: CachedNodeData): void {
+		if (!nodeData.points) return;
+
+		// Dispose old material
+		if (nodeData.points.material instanceof THREE.Material) {
+			nodeData.points.material.dispose();
+		}
+
+		// Create new material with current settings
+		nodeData.points.material = this.createPointMaterial();
+
+		// Update cached configuration
+		nodeData.materialConfig = {
+			colorMode: this.options.colorMode,
+			pointSize: this.options.pointSize,
+			depthTest: this.options.depthTest,
+		};
+	}
+
+	/**
+	 * Remove node from request queue
+	 */
+	private removeFromRequestQueue(nodeId: string): void {
+		const index = this.requestQueue.indexOf(nodeId);
+		if (index > -1) {
+			this.requestQueue.splice(index, 1);
+		}
 	}
 
 	/**
 	 * Called when the layer is added to the map
-	 * Initializes the Three.js renderer and starts loading COPC data
-	 *
-	 * @param map - The MapLibre map instance
-	 * @param gl - The WebGL rendering context
 	 */
 	async onAdd(map: MapLibre, gl: WebGLRenderingContext): Promise<void> {
 		this.map = map;
@@ -248,16 +392,31 @@ export class CopcLayer implements CustomLayerInterface {
 			});
 			this.renderer.autoClear = false;
 		} catch (error) {
-			console.error('Failed to initialize ThreeLayer:', error);
+			console.error('Failed to initialize CopcLayer:', error);
 			throw error;
 		}
 	}
 
 	/**
-	 * Dynamically adjust the point size for all rendered points
-	 *
-	 * @param size - New point size in pixels (must be positive)
-	 * @throws {Error} If size is not a positive number
+	 * Update cache configuration and apply to existing nodes
+	 */
+	public updateCacheConfig(config: Partial<CopcLayerOptions>): void {
+		// Update layer options
+		Object.assign(this.options, config);
+
+		// Update cache manager settings
+		this.cacheManager.updateOptions({
+			maxNodes: this.options.maxCacheSize,
+			maxMemoryBytes: this.options.maxCacheMemory,
+			enableLogging: this.options.enableCacheLogging,
+		});
+
+		// Refresh visible nodes to apply new settings
+		this.updateVisibleNodes();
+	}
+
+	/**
+	 * Set point size and update cached materials
 	 */
 	public setPointSize(size: number): void {
 		if (typeof size !== 'number' || size <= 0 || !Number.isFinite(size)) {
@@ -266,13 +425,13 @@ export class CopcLayer implements CustomLayerInterface {
 
 		this.options.pointSize = size;
 
-		// Update all existing points
-		Object.values(this.pointsMap).forEach((points) => {
-			if (points.material instanceof THREE.PointsMaterial) {
-				points.material.size = size;
-				points.material.needsUpdate = true;
+		// Update all cached nodes
+		for (const nodeId of this.cacheManager.getCachedNodeIds()) {
+			const nodeData = this.cacheManager.get(nodeId);
+			if (nodeData) {
+				this.updateNodeMaterial(nodeData);
 			}
-		});
+		}
 
 		if (this.map) {
 			this.map.triggerRepaint();
@@ -280,13 +439,7 @@ export class CopcLayer implements CustomLayerInterface {
 	}
 
 	/**
-	 * Set the Screen Space Error threshold for level-of-detail control
-	 *
-	 * Higher values show more detail (load more nodes), lower values show less detail.
-	 * Typical range is 1-10.
-	 *
-	 * @param threshold - New SSE threshold (must be positive)
-	 * @throws {Error} If threshold is not a positive number
+	 * Set SSE threshold for level-of-detail control
 	 */
 	public setSseThreshold(threshold: number): void {
 		if (
@@ -299,7 +452,6 @@ export class CopcLayer implements CustomLayerInterface {
 
 		this.sseThreshold = threshold;
 		this.options.sseThreshold = threshold;
-
 		this.updatePoints();
 
 		if (this.map) {
@@ -308,12 +460,7 @@ export class CopcLayer implements CustomLayerInterface {
 	}
 
 	/**
-	 * Toggle depth testing for point rendering
-	 *
-	 * When enabled, points farther from the camera will be hidden behind
-	 * closer points, providing proper 3D depth perception.
-	 *
-	 * @param enabled - Whether to enable depth testing
+	 * Toggle depth testing and update cached materials
 	 */
 	public toggleDepthTest(enabled: boolean): void {
 		if (typeof enabled !== 'boolean') {
@@ -322,14 +469,13 @@ export class CopcLayer implements CustomLayerInterface {
 
 		this.options.depthTest = enabled;
 
-		// Update all existing points
-		Object.values(this.pointsMap).forEach((points) => {
-			if (points.material instanceof THREE.PointsMaterial) {
-				points.material.depthTest = enabled;
-				points.material.depthWrite = enabled;
-				points.material.needsUpdate = true;
+		// Update all cached nodes
+		for (const nodeId of this.cacheManager.getCachedNodeIds()) {
+			const nodeData = this.cacheManager.get(nodeId);
+			if (nodeData) {
+				this.updateNodeMaterial(nodeData);
 			}
-		});
+		}
 
 		if (this.map) {
 			this.map.triggerRepaint();
@@ -337,8 +483,7 @@ export class CopcLayer implements CustomLayerInterface {
 	}
 
 	/**
-	 * Update the visible points based on current camera position
-	 * This method is called automatically during rendering
+	 * Update visible points based on camera position
 	 */
 	private updatePoints(): void {
 		if (!this.map || !this.workerInitialized) {
@@ -346,11 +491,9 @@ export class CopcLayer implements CustomLayerInterface {
 		}
 
 		try {
-			// Get camera position in world coordinates
 			const cameraLngLat = this.map.transform.getCameraLngLat().toArray();
 			const cameraAltitude = this.map.transform.getCameraAltitude();
 
-			// Send camera information to worker to determine which nodes to load
 			this.worker.postMessage({
 				type: 'updatePoints',
 				cameraPosition: [...cameraLngLat, cameraAltitude],
@@ -363,10 +506,13 @@ export class CopcLayer implements CustomLayerInterface {
 		}
 	}
 
+	/**
+	 * Render the scene
+	 */
 	render(_: WebGLRenderingContext, options: CustomRenderMethodInput) {
 		if (!this.map || !this.renderer) return;
 
-		// Update camera projection matrix from map transform
+		// Update camera projection matrix
 		const m = new THREE.Matrix4().fromArray(
 			options.defaultProjectionData.mainMatrix,
 		);
@@ -383,99 +529,27 @@ export class CopcLayer implements CustomLayerInterface {
 	}
 
 	/**
-	 * Called when the layer is removed from the map
-	 * Cleans up all resources including the worker, geometry, and materials
-	 *
-	 * @param _map - The MapLibre map instance (unused)
-	 * @param _gl - The WebGL rendering context (unused)
+	 * Clean up resources when layer is removed
 	 */
 	onRemove(_map: MapLibre, _gl: WebGLRenderingContext): void {
 		try {
-			// Terminate the worker
+			// Terminate worker
 			this.worker.terminate();
 
-			// Remove all points from the scene and dispose resources
-			Object.keys(this.pointsMap).forEach((node) => {
-				const points = this.pointsMap[node];
-				if (points) {
-					this.scene.remove(points);
-					this.disposePoints(points);
-				}
-			});
+			// Clear cache (disposes Three.js resources)
+			this.cacheManager.clear();
 
-			// Dispose of cached points
-			this.pointCache.forEach((points) => {
-				this.disposePoints(points);
-			});
-
-			// Clear all collections
-			Object.keys(this.pointsMap).forEach((key) => delete this.pointsMap[key]);
+			// Clear collections
 			this.visibleNodes.length = 0;
-			this.pointCache.clear();
+			this.pendingRequests.clear();
+			this.requestQueue.length = 0;
 		} catch (error) {
 			console.error('Error during layer cleanup:', error);
 		}
 	}
 
 	/**
-	 * Helper method to properly dispose of Three.js Points objects
-	 *
-	 * @param points - The Three.js Points object to dispose
-	 */
-	private disposePoints(points: THREE.Points): void {
-		try {
-			points.geometry.dispose();
-			if (points.material instanceof THREE.Material) {
-				points.material.dispose();
-			}
-		} catch (error) {
-			console.warn('Error disposing points:', error);
-		}
-	}
-
-	/**
-	 * Prune the point cache to stay within the maximum cache size limit
-	 * Removes the deepest (most detailed) nodes first
-	 */
-	private pruneCache(): void {
-		// If cache size is within limits, do nothing
-		if (this.pointCache.size <= this.options.maxCacheSize) {
-			return;
-		}
-
-		// Get all cached nodes
-		const cachedNodes = Array.from(this.pointCache.keys());
-
-		// Sort by depth (higher depth = more detailed = remove first)
-		cachedNodes.sort((a, b) => {
-			const depthA = parseInt(a.split('-')[0]);
-			const depthB = parseInt(b.split('-')[0]);
-			return depthB - depthA;
-		});
-
-		// Remove nodes until cache is within size limit
-		while (
-			this.pointCache.size > this.options.maxCacheSize &&
-			cachedNodes.length > 0
-		) {
-			const nodeToRemove = cachedNodes.shift()!;
-			const points = this.pointCache.get(nodeToRemove);
-
-			if (points) {
-				this.disposePoints(points);
-				this.pointCache.delete(nodeToRemove);
-
-				console.log(
-					`Removed from cache: ${nodeToRemove}, Cache size: ${this.pointCache.size}`,
-				);
-			}
-		}
-	}
-
-	/**
-	 * Creates a Three.js material for rendering points based on current options
-	 *
-	 * @returns A configured PointsMaterial
+	 * Create Three.js material for point rendering
 	 */
 	private createPointMaterial(): THREE.PointsMaterial {
 		const material = new THREE.PointsMaterial({
@@ -486,7 +560,6 @@ export class CopcLayer implements CustomLayerInterface {
 			sizeAttenuation: true,
 		});
 
-		// Set white color if specified
 		if (this.options.colorMode === 'white') {
 			material.color.setHex(0xffffff);
 		}
@@ -495,69 +568,69 @@ export class CopcLayer implements CustomLayerInterface {
 	}
 
 	/**
-	 * Get the current point size
-	 *
-	 * @returns Current point size in pixels
+	 * Format bytes for human-readable display
 	 */
+	private formatBytes(bytes: number): string {
+		const sizes = ['B', 'KB', 'MB', 'GB'];
+		if (bytes === 0) return '0 B';
+		const i = Math.floor(Math.log(bytes) / Math.log(1024));
+		return Math.round((bytes / Math.pow(1024, i)) * 100) / 100 + ' ' + sizes[i];
+	}
+
+	// Public API methods
+
 	public getPointSize(): number {
 		return this.options.pointSize;
 	}
 
-	/**
-	 * Get the current color mode
-	 *
-	 * @returns Current color mode
-	 */
 	public getColorMode(): ColorMode {
 		return this.options.colorMode;
 	}
 
-	/**
-	 * Get the current SSE threshold
-	 *
-	 * @returns Current SSE threshold
-	 */
 	public getSseThreshold(): number {
 		return this.sseThreshold;
 	}
 
-	/**
-	 * Get whether depth testing is enabled
-	 *
-	 * @returns True if depth testing is enabled
-	 */
 	public isDepthTestEnabled(): boolean {
 		return this.options.depthTest;
 	}
 
-	/**
-	 * Get the current configuration options
-	 *
-	 * @returns A copy of the current options
-	 */
 	public getOptions(): Readonly<CopcLayerOptions> {
 		return { ...this.options };
 	}
 
-	/**
-	 * Check if the layer is currently loading data
-	 *
-	 * @returns True if the worker has been initialized and is processing
-	 */
 	public isLoading(): boolean {
-		return this.workerInitialized;
+		return this.pendingRequests.size > 0 || !this.workerInitialized;
 	}
 
 	/**
-	 * Get statistics about the currently loaded nodes
-	 *
-	 * @returns Object containing node statistics
+	 * Get comprehensive node statistics including cache performance
 	 */
-	public getNodeStats(): { loaded: number; visible: number; cached: number } {
+	public getNodeStats(): NodeStats {
+		const cacheStats = this.cacheManager.getStats();
+		
 		return {
-			loaded: Object.keys(this.pointsMap).length,
+			loaded: cacheStats.size,
 			visible: this.visibleNodes.length,
-			cached: this.pointCache.size,
+			cached: cacheStats.size,
+			cacheHitRatio: cacheStats.hitRatio,
+			cacheMemoryUsage: cacheStats.memoryUsage,
+			pendingRequests: this.pendingRequests.size,
 		};
+	}
+
+	/**
+	 * Get detailed cache performance statistics
+	 */
+	public getCacheStats(): Readonly<CacheStats> {
+		return this.cacheManager.getStats();
+	}
+
+	/**
+	 * Clear the cache manually (useful for debugging or memory management)
+	 */
+	public clearCache(): void {
+		this.cacheManager.clear();
+		this.updateVisibleNodes(); // Refresh scene
 	}
 }

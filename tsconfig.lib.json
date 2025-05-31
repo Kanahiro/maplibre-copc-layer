@@ -19,6 +19,6 @@
 		"noFallthroughCasesInSwitch": true,
 		"noUncheckedSideEffectImports": true
 	},
-	"include": ["src/index.ts", "src/threelayer.ts", "src/worker/sse.ts", "src/utils.ts"],
+	"include": ["src/index.ts", "src/copclayer.ts", "src/cache-manager.ts", "src/worker/sse.ts"],
 	"exclude": ["src/worker/index.ts", "example", "demo", "dist"]
 }
