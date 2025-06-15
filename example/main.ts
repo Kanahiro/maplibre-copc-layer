@@ -19,6 +19,7 @@ const map = new Map({
 				tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
 				tileSize: 256,
 				attribution: '© OpenStreetMap contributors',
+				maxzoom: 18,
 			},
 			dem: gsiTerrainSource,
 		},
@@ -216,7 +217,10 @@ infoFolder.add(layerStats, 'visible').name('Visible Nodes').listen();
 infoFolder.add(layerStats, 'cached').name('Cached Nodes').listen();
 infoFolder.add(layerStats, 'isLoading').name('Is Loading').listen();
 infoFolder.add(layerStats, 'cacheHitRatio').name('Cache Hit Ratio').listen();
-infoFolder.add(layerStats, 'cacheMemoryUsage').name('Cache Memory (MB)').listen();
+infoFolder
+	.add(layerStats, 'cacheMemoryUsage')
+	.name('Cache Memory (MB)')
+	.listen();
 infoFolder.add(layerStats, 'pendingRequests').name('Pending Requests').listen();
 
 // Update event listeners to save parameters to URL
@@ -296,7 +300,8 @@ setInterval(() => {
 		layerStats.cached = stats.cached;
 		layerStats.isLoading = copcLayer.isLoading();
 		layerStats.cacheHitRatio = Math.round(stats.cacheHitRatio * 100) / 100; // Round to 2 decimal places
-		layerStats.cacheMemoryUsage = Math.round(stats.cacheMemoryUsage / (1024 * 1024) * 100) / 100; // Convert to MB
+		layerStats.cacheMemoryUsage =
+			Math.round((stats.cacheMemoryUsage / (1024 * 1024)) * 100) / 100; // Convert to MB
 		layerStats.pendingRequests = stats.pendingRequests;
 	}
 }, 1000);

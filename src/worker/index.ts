@@ -3,9 +3,6 @@ import { Copc, Hierarchy } from 'copc';
 import proj4, { Converter } from 'proj4';
 import { computeScreenSpaceError } from './sse';
 
-// Define Web Mercator projection for direct transformation
-proj4.defs('EPSG:3857', '+proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +wktext +no_defs');
-
 // Message types for worker communication
 interface InitMessage {
 	type: 'init';
@@ -38,7 +35,6 @@ type WorkerMessage = InitMessage | LoadNodeMessage | UpdatePointsMessage | Cance
 
 let copc: Copc | null = null;
 let proj: Converter;
-let directToMercator: Converter | null = null; // Direct projection to Web Mercator
 let nodes: Hierarchy.Node.Map = {};
 let nodeCenters: Record<string, [number, number, number]> = {};
 let url: string;
@@ -94,15 +90,6 @@ async function initCopc(url: string) {
 		}
 
 		proj = proj4(copc.wkt);
-		
-		// Try to create direct projection to Web Mercator for better precision
-		try {
-			directToMercator = proj4(copc.wkt, 'EPSG:3857');
-		} catch (e) {
-			// Fallback to two-step transformation if direct projection fails
-			console.warn('Direct projection to Web Mercator failed, using two-step transformation');
-			directToMercator = null;
-		}
 
 		const { nodes: loadedNodes } = await Copc.loadHierarchyPage(
 			url,
@@ -190,39 +177,26 @@ async function loadNode(node: string) {
 			const xyzGetters = ['X', 'Y', 'Z'].map(view.getter);
 			const point = getPoint(xyzGetters, i);
 			
-			let mercX: number, mercY: number, mercZ: number;
+			// High-precision two-step transformation
+			const [lon, lat] = proj.inverse([point[0], point[1]]);
 			
-			if (directToMercator) {
-				// Use direct projection for better precision
-				const [mercatorX, mercatorY] = directToMercator.forward([point[0], point[1]]);
-				
-				// Normalize to 0-1 range used by MapLibre
-				// Note: In MapLibre, Y=0 is north pole, Y=1 is south pole
-				mercX = (mercatorX + EARTH_CIRCUMFERENCE / 2) / EARTH_CIRCUMFERENCE;
-				mercY = 0.5 - (mercatorY / EARTH_CIRCUMFERENCE);
-				mercZ = point[2] / EARTH_CIRCUMFERENCE;
-			} else {
-				// Fallback to high-precision two-step transformation
-				const [lon, lat] = proj.inverse([point[0], point[1]]);
-				
-				// Convert to radians for higher precision
-				const lonRad = lon * PI_180;
-				const latRad = lat * PI_180;
-				
-				// High-precision Web Mercator transformation
-				// x = R * λ (longitude in radians)
-				mercX = 0.5 + lonRad / (2 * Math.PI);
-				
-				// y = R * ln(tan(π/4 + φ/2)) using more stable formula
-				// In MapLibre coordinates: Y=0 is north, Y=1 is south
-				// So we need to invert the standard mercator Y coordinate
-				const sinLat = Math.sin(latRad);
-				const k = (1 + sinLat) / (1 - sinLat);
-				mercY = 0.5 - Math.log(k) / (4 * Math.PI);
-				
-				// Z coordinate: convert altitude to normalized mercator units
-				mercZ = point[2] / EARTH_CIRCUMFERENCE;
-			}
+			// Convert to radians for higher precision
+			const lonRad = lon * PI_180;
+			const latRad = lat * PI_180;
+			
+			// High-precision Web Mercator transformation
+			// x = R * λ (longitude in radians)
+			const mercX = 0.5 + lonRad / (2 * Math.PI);
+			
+			// y = R * ln(tan(π/4 + φ/2)) using more stable formula
+			// In MapLibre coordinates: Y=0 is north, Y=1 is south
+			// So we need to invert the standard mercator Y coordinate
+			const sinLat = Math.sin(latRad);
+			const k = (1 + sinLat) / (1 - sinLat);
+			const mercY = 0.5 - Math.log(k) / (4 * Math.PI);
+			
+			// Z coordinate: convert altitude to normalized mercator units
+			const mercZ = point[2] / EARTH_CIRCUMFERENCE;
 
 			// Store position with offset applied later for additional precision
 			positions[i * 3] = mercX;
