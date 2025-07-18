@@ -52,6 +52,10 @@ const parameters = {
 	wasmPath: '/assets/laz-perf.wasm', // Configure WASM path explicitly
 	maxCacheMemory: 100 * 1024 * 1024, // 100MB
 	enableCacheLogging: false,
+	enableEDL: false,
+	edlStrength: 0.4,
+	edlRadius: 1.5,
+	edlOpacity: 1.0,
 };
 
 // Create URL input container with improved styling
@@ -143,6 +147,10 @@ function updateUrlParameters() {
 	url.searchParams.set('colorMode', parameters.colorMode);
 	url.searchParams.set('sseThreshold', parameters.sseThreshold.toString());
 	url.searchParams.set('depthTest', parameters.depthTest.toString());
+	url.searchParams.set('enableEDL', parameters.enableEDL.toString());
+	url.searchParams.set('edlStrength', parameters.edlStrength.toString());
+	url.searchParams.set('edlRadius', parameters.edlRadius.toString());
+	url.searchParams.set('edlOpacity', parameters.edlOpacity.toString());
 	window.history.pushState({}, '', url);
 }
 
@@ -182,6 +190,26 @@ function loadParametersFromUrl() {
 	const depthTest = url.searchParams.get('depthTest');
 	if (depthTest) {
 		parameters.depthTest = depthTest === 'true';
+	}
+
+	const enableEDL = url.searchParams.get('enableEDL');
+	if (enableEDL) {
+		parameters.enableEDL = enableEDL === 'true';
+	}
+
+	const edlStrength = url.searchParams.get('edlStrength');
+	if (edlStrength) {
+		parameters.edlStrength = parseFloat(edlStrength);
+	}
+
+	const edlRadius = url.searchParams.get('edlRadius');
+	if (edlRadius) {
+		parameters.edlRadius = parseFloat(edlRadius);
+	}
+
+	const edlOpacity = url.searchParams.get('edlOpacity');
+	if (edlOpacity) {
+		parameters.edlOpacity = parseFloat(edlOpacity);
 	}
 }
 
@@ -240,6 +268,10 @@ pointsFolder
 					depthTest: parameters.depthTest,
 					maxCacheMemory: parameters.maxCacheMemory,
 					enableCacheLogging: parameters.enableCacheLogging,
+					enableEDL: parameters.enableEDL,
+					edlStrength: parameters.edlStrength,
+					edlRadius: parameters.edlRadius,
+					edlOpacity: parameters.edlOpacity,
 				});
 
 				map.addLayer(copcLayer);
@@ -260,6 +292,49 @@ renderingFolder
 	.onChange((value: boolean) => {
 		if (copcLayer) {
 			copcLayer.toggleDepthTest(value);
+		}
+		updateUrlParameters();
+	});
+
+renderingFolder
+	.add(parameters, 'enableEDL')
+	.name('Enable EDL')
+	.onChange((value: boolean) => {
+		if (copcLayer) {
+			copcLayer.setEDLEnabled(value);
+		}
+		updateUrlParameters();
+	});
+
+// Create EDL parameters folder
+const edlFolder = renderingFolder.addFolder('EDL Parameters');
+
+edlFolder
+	.add(parameters, 'edlStrength', 0, 50, 0.1)
+	.name('EDL Strength')
+	.onChange((value: number) => {
+		if (copcLayer) {
+			copcLayer.updateEDLParameters({ strength: value });
+		}
+		updateUrlParameters();
+	});
+
+edlFolder
+	.add(parameters, 'edlRadius', 0.5, 5, 0.1)
+	.name('EDL Radius')
+	.onChange((value: number) => {
+		if (copcLayer) {
+			copcLayer.updateEDLParameters({ radius: value });
+		}
+		updateUrlParameters();
+	});
+
+edlFolder
+	.add(parameters, 'edlOpacity', 0, 1, 0.1)
+	.name('EDL Opacity')
+	.onChange((value: number) => {
+		if (copcLayer) {
+			copcLayer.updateEDLParameters({ opacity: value });
 		}
 		updateUrlParameters();
 	});
@@ -310,6 +385,10 @@ function loadThreeLayerFromUrlParams() {
 			depthTest: parameters.depthTest,
 			maxCacheMemory: parameters.maxCacheMemory,
 			enableCacheLogging: parameters.enableCacheLogging,
+			enableEDL: parameters.enableEDL,
+			edlStrength: parameters.edlStrength,
+			edlRadius: parameters.edlRadius,
+			edlOpacity: parameters.edlOpacity,
 		});
 		map.addLayer(copcLayer);
 	}
