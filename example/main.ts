@@ -44,17 +44,17 @@ map.on('load', () => {
 });
 
 const parameters = {
-	pointSize: 6,
+	pointSize: 4,
 	colorMode: 'rgb' as 'rgb' | 'height' | 'intensity' | 'white',
 	maxCacheSize: 100,
-	sseThreshold: 4,
+	sseThreshold: 2,
 	depthTest: true,
 	wasmPath: '/assets/laz-perf.wasm', // Configure WASM path explicitly
 	maxCacheMemory: 100 * 1024 * 1024, // 100MB
 	enableCacheLogging: false,
-	enableEDL: false,
-	edlStrength: 0.4,
-	edlRadius: 1.5,
+	enableEDL: true,
+	edlStrength: 30,
+	edlRadius: 3,
 	edlOpacity: 1.0,
 };
 
@@ -389,6 +389,12 @@ function loadThreeLayerFromUrlParams() {
 			edlStrength: parameters.edlStrength,
 			edlRadius: parameters.edlRadius,
 			edlOpacity: parameters.edlOpacity,
+			onInitialized: (message) => {
+				map.flyTo({
+					center: message.center,
+					zoom: 16,
+				});
+			},
 		});
 		map.addLayer(copcLayer);
 	}
