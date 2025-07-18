@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Copc, Hierarchy } from 'copc';
-import proj4, { Converter } from 'proj4';
+import proj4, { type Converter } from 'proj4';
 import { computeScreenSpaceError } from './sse';
 
 // Message types for worker communication
@@ -39,27 +39,25 @@ let nodes: Hierarchy.Node.Map = {};
 let nodeCenters: Record<string, [number, number, number]> = {};
 let url: string;
 let colorMode: 'rgb' | 'height' | 'intensity' | 'white' = 'rgb';
-let cancelledRequests: Set<string> = new Set();
+const cancelledRequests: Set<string> = new Set();
 
 /**
  * Calculate the center point of a cube at a specific node location
  */
 function calcCubeCenter(
 	cube: [number, number, number, number, number, number],
-	node: string,
+	node: string
 ): [number, number, number] {
 	const _node = node.split('-').map((n) => parseInt(n)); // 3-4-5-6
-	const cubeSizeOfNode = [
-		cube[3] - cube[0],
-		cube[4] - cube[1],
-		cube[5] - cube[2],
-	].map((size) => size / Math.pow(2, _node[0]));
+	const cubeSizeOfNode = [cube[3] - cube[0], cube[4] - cube[1], cube[5] - cube[2]].map(
+		(size) => size / Math.pow(2, _node[0])
+	);
 
 	// cube origin + cube size * node + cube size / 2
 	const nodeCenter = [
 		cube[0] + cubeSizeOfNode[0] * _node[1] + cubeSizeOfNode[0] / 2,
 		cube[1] + cubeSizeOfNode[1] * _node[2] + cubeSizeOfNode[1] / 2,
-		cube[2] + cubeSizeOfNode[2] * _node[3] + cubeSizeOfNode[2] / 2,
+		cube[2] + cubeSizeOfNode[2] * _node[3] + cubeSizeOfNode[2] / 2
 	];
 	return nodeCenter as [number, number, number];
 }
@@ -67,10 +65,7 @@ function calcCubeCenter(
 /**
  * Helper function to get point data by index
  */
-function getPoint(
-	getters: ((index: number) => number)[],
-	index: number,
-): number[] {
+function getPoint(getters: ((index: number) => number)[], index: number): number[] {
 	return getters.map((get) => get(index));
 }
 
@@ -80,45 +75,39 @@ function getPoint(
 async function initCopc(url: string) {
 	try {
 		copc = await Copc.create(url);
-
 		if (!copc || !copc.wkt) {
 			self.postMessage({
 				type: 'error',
-				message: 'Failed to initialize COPC or WKT is missing',
+				message: 'Failed to initialize COPC or WKT is missing'
 			});
 			return;
 		}
 
 		proj = proj4(copc.wkt);
 
-		const { nodes: loadedNodes } = await Copc.loadHierarchyPage(
-			url,
-			copc.info.rootHierarchyPage,
-		);
+		const { nodes: loadedNodes } = await Copc.loadHierarchyPage(url, copc.info.rootHierarchyPage);
 
 		nodes = loadedNodes;
 		nodeCenters = Object.entries(nodes).reduce((curr, [k, _]) => {
 			const center = calcCubeCenter(copc!.info.cube, k);
 			return {
 				...curr,
-				[k]: center,
+				[k]: center
 			};
 		}, {});
 
 		const rootCenter = nodeCenters['0-0-0-0'];
 		const rootCenterLngLat = proj.inverse([rootCenter[0], rootCenter[1]]);
-		
-		self.postMessage({ 
-			type: 'initialized', 
+
+		self.postMessage({
+			type: 'initialized',
 			center: rootCenterLngLat,
 			nodeCount: Object.keys(nodes).length
 		});
 	} catch (error) {
 		self.postMessage({
 			type: 'error',
-			message: `Error initializing COPC: ${
-				error instanceof Error ? error.message : String(error)
-			}`,
+			message: `Error initializing COPC: ${error instanceof Error ? error.message : String(error)}`
 		});
 	}
 }
@@ -160,10 +149,7 @@ async function loadNode(node: string) {
 		const colors = new Float32Array(targetNode.pointCount * 3);
 
 		// Check available data dimensions
-		const hasRgb = 
-			view.dimensions['Red'] && 
-			view.dimensions['Green'] && 
-			view.dimensions['Blue'];
+		const hasRgb = view.dimensions['Red'] && view.dimensions['Green'] && view.dimensions['Blue'];
 		const hasIntensity = view.dimensions['Intensity'];
 
 		// Process each point
@@ -171,30 +157,30 @@ async function loadNode(node: string) {
 		const EARTH_RADIUS = 6378137.0; // WGS84 semi-major axis in meters
 		const EARTH_CIRCUMFERENCE = 2 * Math.PI * EARTH_RADIUS;
 		const PI_180 = Math.PI / 180.0;
-		
+
 		for (let i = 0; i < targetNode.pointCount; i++) {
 			// Get XYZ coordinates
 			const xyzGetters = ['X', 'Y', 'Z'].map(view.getter);
 			const point = getPoint(xyzGetters, i);
-			
+
 			// High-precision two-step transformation
 			const [lon, lat] = proj.inverse([point[0], point[1]]);
-			
+
 			// Convert to radians for higher precision
 			const lonRad = lon * PI_180;
 			const latRad = lat * PI_180;
-			
+
 			// High-precision Web Mercator transformation
 			// x = R * λ (longitude in radians)
 			const mercX = 0.5 + lonRad / (2 * Math.PI);
-			
+
 			// y = R * ln(tan(π/4 + φ/2)) using more stable formula
 			// In MapLibre coordinates: Y=0 is north, Y=1 is south
 			// So we need to invert the standard mercator Y coordinate
 			const sinLat = Math.sin(latRad);
 			const k = (1 + sinLat) / (1 - sinLat);
 			const mercY = 0.5 - Math.log(k) / (4 * Math.PI);
-			
+
 			// Z coordinate: convert altitude to normalized mercator units
 			const mercZ = point[2] / EARTH_CIRCUMFERENCE;
 
@@ -221,15 +207,13 @@ async function loadNode(node: string) {
 				case 'height':
 					// Color by height (Z value) with blue-to-red gradient
 					const normalizedHeight =
-						(point[2] - copc.info.cube[2]) /
-						(copc.info.cube[5] - copc.info.cube[2]);
+						(point[2] - copc.info.cube[2]) / (copc.info.cube[5] - copc.info.cube[2]);
 
 					colors[i * 3] = Math.min(1, Math.max(0, normalizedHeight * 2)); // Red
-					colors[i * 3 + 1] = Math.min(1, Math.max(0, 
-						normalizedHeight > 0.5 
-							? 2 - normalizedHeight * 2 
-							: normalizedHeight * 2
-					)); // Green
+					colors[i * 3 + 1] = Math.min(
+						1,
+						Math.max(0, normalizedHeight > 0.5 ? 2 - normalizedHeight * 2 : normalizedHeight * 2)
+					); // Green
 					colors[i * 3 + 2] = Math.min(1, Math.max(0, 1 - normalizedHeight * 2)); // Blue
 					break;
 
@@ -253,20 +237,22 @@ async function loadNode(node: string) {
 		}
 
 		// Send data to main thread for caching
-		self.postMessage({
-			type: 'nodeLoaded',
-			node,
-			positions: positions.buffer,
-			colors: colors.buffer,
-			pointCount: targetNode.pointCount,
-		}, { transfer: [positions.buffer, colors.buffer] }); // Transfer ownership for performance
-
+		self.postMessage(
+			{
+				type: 'nodeLoaded',
+				node,
+				positions: positions.buffer,
+				colors: colors.buffer,
+				pointCount: targetNode.pointCount
+			},
+			{ transfer: [positions.buffer, colors.buffer] }
+		); // Transfer ownership for performance
 	} catch (error) {
 		self.postMessage({
 			type: 'error',
 			message: `Error loading node ${node}: ${
 				error instanceof Error ? error.message : String(error)
-			}`,
+			}`
 		});
 	}
 }
@@ -280,7 +266,7 @@ function updatePoints(
 	cameraPosition: [number, number, number],
 	mapHeight: number,
 	fov: number,
-	sseThreshold: number,
+	sseThreshold: number
 ) {
 	// Simple debouncing - update every 10 calls
 	if (updateCount++ < 10) return;
@@ -294,7 +280,7 @@ function updatePoints(
 	try {
 		const cameraVector = new THREE.Vector3(
 			...proj!.forward([cameraPosition[0], cameraPosition[1]]),
-			cameraPosition[2],
+			cameraPosition[2]
 		);
 
 		const visibleNodes: string[] = [];
@@ -314,7 +300,7 @@ function updatePoints(
 				fov,
 				copc!.info.spacing * Math.pow(0.5, depth), // Geometric error decreases with depth
 				mapHeight,
-				distanceFactor,
+				distanceFactor
 			);
 
 			// If node passes SSE test, mark as visible
@@ -333,15 +319,12 @@ function updatePoints(
 			type: 'nodesToLoad',
 			nodes: visibleNodes,
 			cameraPosition,
-			sseThreshold,
+			sseThreshold
 		});
-
 	} catch (error) {
 		self.postMessage({
 			type: 'error',
-			message: `Error updating points: ${
-				error instanceof Error ? error.message : String(error)
-			}`,
+			message: `Error updating points: ${error instanceof Error ? error.message : String(error)}`
 		});
 	}
 }
@@ -368,17 +351,12 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
 				break;
 
 			case 'updatePoints':
-				updatePoints(
-					message.cameraPosition,
-					message.mapHeight,
-					message.fov,
-					message.sseThreshold,
-				);
+				updatePoints(message.cameraPosition, message.mapHeight, message.fov, message.sseThreshold);
 				break;
 
 			case 'cancelRequests':
 				// Mark all specified nodes as cancelled
-				message.nodes.forEach(nodeId => {
+				message.nodes.forEach((nodeId) => {
 					cancelledRequests.add(nodeId);
 				});
 				break;
@@ -386,15 +364,13 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
 			default:
 				self.postMessage({
 					type: 'error',
-					message: `Unknown message type: ${(message as any).type}`,
+					message: `Unknown message type: ${(message as any).type}`
 				});
 		}
 	} catch (error) {
 		self.postMessage({
 			type: 'error',
-			message: `Error processing message: ${
-				error instanceof Error ? error.message : String(error)
-			}`,
+			message: `Error processing message: ${error instanceof Error ? error.message : String(error)}`
 		});
 	}
 };

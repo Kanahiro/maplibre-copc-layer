@@ -1,11 +1,10 @@
-import {
-	CustomLayerInterface,
-	CustomRenderMethodInput,
-	Map as MapLibre,
-	MercatorCoordinate,
-} from 'maplibre-gl';
+import maplibregl from 'maplibre-gl';
 import * as THREE from 'three';
-import { CacheManager, CachedNodeData } from './cache-manager';
+import { CacheManager, type CachedNodeData } from './cache-manager';
+import pointsVertexShader from './shaders/points.vert.glsl?raw';
+import pointsFragmentShader from './shaders/points.frag.glsl?raw';
+import edlVertexShader from './shaders/edl.vert.glsl?raw';
+import edlFragmentShader from './shaders/edl.frag.glsl?raw';
 
 /**
  * Color modes available for point cloud rendering
@@ -30,6 +29,14 @@ export interface CopcLayerOptions {
 	maxCacheMemory?: number;
 	/** Enable cache logging for debugging (default: false) */
 	enableCacheLogging?: boolean;
+	/** Enable Eye-Dome Lighting effect (default: false) */
+	enableEDL?: boolean;
+	/** EDL strength (default: 0.4) */
+	edlStrength?: number;
+	/** EDL radius in pixels (default: 1.5) */
+	edlRadius?: number;
+	/** EDL opacity (default: 1.0) */
+	edlOpacity?: number;
 }
 
 /**
@@ -43,6 +50,10 @@ const DEFAULT_OPTIONS: Required<CopcLayerOptions> = {
 	depthTest: true,
 	maxCacheMemory: 100 * 1024 * 1024, // 100MB
 	enableCacheLogging: false,
+	enableEDL: false,
+	edlStrength: 0.4,
+	edlRadius: 1.5,
+	edlOpacity: 1.0
 } as const;
 
 /**
@@ -80,18 +91,18 @@ export interface NodeStats {
  * map.addLayer(layer);
  * ```
  */
-export class CopcLayer implements CustomLayerInterface {
+export class CopcLayer implements maplibregl.CustomLayerInterface {
 	/** Layer identifier */
 	readonly id: string;
 	/** Layer type - always 'custom' */
-	readonly type: 'custom' = 'custom';
+	readonly type: 'custom' = 'custom' as const;
 	/** Rendering mode - always '3d' */
-	readonly renderingMode: '3d' = '3d';
+	readonly renderingMode: '3d' = '3d' as const;
 	/** URL to the COPC file */
 	readonly url: string;
 
 	/** Reference to the MapLibre map instance */
-	public map?: MapLibre;
+	public map?: maplibregl.Map;
 	/** Three.js camera */
 	public readonly camera: THREE.Camera;
 	/** Three.js scene */
@@ -118,7 +129,13 @@ export class CopcLayer implements CustomLayerInterface {
 	/** Current camera position for request prioritization */
 	private lastCameraPosition: [number, number, number] | null = null;
 	/** Scene center for precision rendering */
-	private sceneCenter: MercatorCoordinate | null = null;
+	private sceneCenter: maplibregl.MercatorCoordinate | null = null;
+	/** EDL render targets and materials */
+	private colorTarget?: THREE.WebGLRenderTarget;
+	private depthTarget?: THREE.WebGLRenderTarget;
+	private edlMaterial?: THREE.ShaderMaterial;
+	private edlQuadScene?: THREE.Scene;
+	private edlQuadCamera?: THREE.OrthographicCamera;
 
 	/**
 	 * Creates a new CopcLayer instance
@@ -127,11 +144,7 @@ export class CopcLayer implements CustomLayerInterface {
 	 * @param options - Configuration options for the layer
 	 * @param layerId - Optional custom layer ID (default: 'copc-layer')
 	 */
-	constructor(
-		url: string,
-		options: CopcLayerOptions = {},
-		layerId: string = 'copc-layer',
-	) {
+	constructor(url: string, options: CopcLayerOptions = {}, layerId: string = 'copc-layer') {
 		if (!url || typeof url !== 'string') {
 			throw new Error('COPC URL is required and must be a string');
 		}
@@ -142,7 +155,7 @@ export class CopcLayer implements CustomLayerInterface {
 		// Merge options with defaults
 		this.options = {
 			...DEFAULT_OPTIONS,
-			...options,
+			...options
 		};
 		this.sseThreshold = this.options.sseThreshold;
 
@@ -150,7 +163,7 @@ export class CopcLayer implements CustomLayerInterface {
 		this.cacheManager = new CacheManager({
 			maxNodes: this.options.maxCacheSize,
 			maxMemoryBytes: this.options.maxCacheMemory,
-			enableLogging: this.options.enableCacheLogging,
+			enableLogging: this.options.enableCacheLogging
 		});
 
 		this.camera = new THREE.Camera();
@@ -159,14 +172,12 @@ export class CopcLayer implements CustomLayerInterface {
 		// Initialize the worker
 		try {
 			this.worker = new Worker(new URL('./worker/index.ts', import.meta.url), {
-				type: 'module',
+				type: 'module'
 			});
 			this.setupWorkerMessageHandlers();
 		} catch (error) {
 			throw new Error(
-				`Failed to initialize worker: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
+				`Failed to initialize worker: ${error instanceof Error ? error.message : String(error)}`
 			);
 		}
 	}
@@ -188,11 +199,7 @@ export class CopcLayer implements CustomLayerInterface {
 
 				case 'nodeLoaded':
 					// Node data loaded from worker
-					this.handleNodeLoaded(
-						message.node,
-						message.positions,
-						message.colors,
-					);
+					this.handleNodeLoaded(message.node, message.positions, message.colors);
 					break;
 
 				case 'nodesToLoad':
@@ -226,7 +233,7 @@ export class CopcLayer implements CustomLayerInterface {
 	private handleNodeLoaded(
 		nodeId: string,
 		positionsBuffer: ArrayBuffer,
-		colorsBuffer: ArrayBuffer,
+		colorsBuffer: ArrayBuffer
 	): void {
 		// Remove from pending requests
 		this.pendingRequests.delete(nodeId);
@@ -241,27 +248,22 @@ export class CopcLayer implements CustomLayerInterface {
 		const materialConfig = {
 			colorMode: this.options.colorMode,
 			pointSize: this.options.pointSize,
-			depthTest: this.options.depthTest,
+			depthTest: this.options.depthTest
 		};
 
 		// Create cached node data
-		const nodeData = CacheManager.createNodeData(
-			nodeId,
-			positions,
-			colors,
-			materialConfig,
-		);
+		const nodeData = CacheManager.createNodeData(nodeId, positions, colors, materialConfig);
 
 		// Create Three.js geometry and points object
 		const geometry = new THREE.BufferGeometry();
-		
+
 		// Apply relative-to-center transformation with high precision
 		if (this.sceneCenter) {
 			// Use double precision for the offset calculation
 			const centerX = this.sceneCenter.x;
 			const centerY = this.sceneCenter.y;
 			const centerZ = this.sceneCenter.z;
-			
+
 			// Convert to Float32Array only after applying the offset
 			// This preserves precision during the critical transformation step
 			const relativePositions = new Float32Array(positions.length);
@@ -270,7 +272,7 @@ export class CopcLayer implements CustomLayerInterface {
 				const relX = positions[i] - centerX;
 				const relY = positions[i + 1] - centerY;
 				const relZ = positions[i + 2] - centerZ;
-				
+
 				// Store as Float32 only after transformation
 				relativePositions[i] = relX;
 				relativePositions[i + 1] = relY;
@@ -282,7 +284,7 @@ export class CopcLayer implements CustomLayerInterface {
 			const float32Positions = new Float32Array(positions);
 			geometry.setAttribute('position', new THREE.BufferAttribute(float32Positions, 3));
 		}
-		
+
 		geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
 		const material = this.createPointMaterial();
@@ -295,7 +297,6 @@ export class CopcLayer implements CustomLayerInterface {
 		// Add to cache, protecting currently visible nodes from eviction
 		const protectedNodes = new Set(this.visibleNodes);
 		this.cacheManager.set(nodeData, protectedNodes);
-
 	}
 
 	/**
@@ -347,7 +348,7 @@ export class CopcLayer implements CustomLayerInterface {
 
 		this.worker.postMessage({
 			type: 'loadNode',
-			node: nodeId,
+			node: nodeId
 		});
 	}
 
@@ -381,7 +382,7 @@ export class CopcLayer implements CustomLayerInterface {
 		nodeData.materialConfig = {
 			colorMode: this.options.colorMode,
 			pointSize: this.options.pointSize,
-			depthTest: this.options.depthTest,
+			depthTest: this.options.depthTest
 		};
 	}
 
@@ -406,7 +407,7 @@ export class CopcLayer implements CustomLayerInterface {
 		// Send cancellation message to worker
 		this.worker.postMessage({
 			type: 'cancelRequests',
-			nodes: Array.from(this.pendingRequests),
+			nodes: Array.from(this.pendingRequests)
 		});
 
 		// Clear pending requests
@@ -458,7 +459,7 @@ export class CopcLayer implements CustomLayerInterface {
 				nodeId,
 				priority: totalPriority,
 				depth,
-				distance,
+				distance
 			};
 		});
 
@@ -466,8 +467,14 @@ export class CopcLayer implements CustomLayerInterface {
 		nodesWithPriority.sort((a, b) => b.priority - a.priority);
 
 		if (this.options.enableCacheLogging) {
-			console.log('[CopcLayer] Prioritized node requests:', 
-				nodesWithPriority.slice(0, 5).map(n => `${n.nodeId} (depth: ${n.depth}, dist: ${n.distance.toFixed(3)}, priority: ${n.priority.toFixed(1)})`)
+			console.log(
+				'[CopcLayer] Prioritized node requests:',
+				nodesWithPriority
+					.slice(0, 5)
+					.map(
+						(n) =>
+							`${n.nodeId} (depth: ${n.depth}, dist: ${n.distance.toFixed(3)}, priority: ${n.priority.toFixed(1)})`
+					)
 			);
 		}
 
@@ -477,7 +484,7 @@ export class CopcLayer implements CustomLayerInterface {
 	/**
 	 * Called when the layer is added to the map
 	 */
-	async onAdd(map: MapLibre, gl: WebGLRenderingContext): Promise<void> {
+	async onAdd(map: maplibregl.Map, gl: WebGLRenderingContext): Promise<void> {
 		this.map = map;
 
 		try {
@@ -487,16 +494,22 @@ export class CopcLayer implements CustomLayerInterface {
 				url: this.url,
 				options: {
 					colorMode: this.options.colorMode,
-					maxCacheSize: this.options.maxCacheSize,
-				},
+					maxCacheSize: this.options.maxCacheSize
+				}
 			});
 
 			// Setup renderer
 			this.renderer = new THREE.WebGLRenderer({
 				canvas: map.getCanvas(),
-				context: gl,
+				context: gl
 			});
+			this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 			this.renderer.autoClear = false;
+
+			// Setup EDL if enabled
+			if (this.options.enableEDL) {
+				this.setupEDL();
+			}
 		} catch (error) {
 			console.error('Failed to initialize CopcLayer:', error);
 			throw error;
@@ -512,11 +525,14 @@ export class CopcLayer implements CustomLayerInterface {
 
 		// Update cache manager settings, protecting currently visible nodes
 		const protectedNodes = new Set(this.visibleNodes);
-		this.cacheManager.updateOptions({
-			maxNodes: this.options.maxCacheSize,
-			maxMemoryBytes: this.options.maxCacheMemory,
-			enableLogging: this.options.enableCacheLogging,
-		}, protectedNodes);
+		this.cacheManager.updateOptions(
+			{
+				maxNodes: this.options.maxCacheSize,
+				maxMemoryBytes: this.options.maxCacheMemory,
+				enableLogging: this.options.enableCacheLogging
+			},
+			protectedNodes
+		);
 
 		// Refresh visible nodes to apply new settings
 		this.updateVisibleNodes();
@@ -549,11 +565,7 @@ export class CopcLayer implements CustomLayerInterface {
 	 * Set SSE threshold for level-of-detail control
 	 */
 	public setSseThreshold(threshold: number): void {
-		if (
-			typeof threshold !== 'number' ||
-			threshold <= 0 ||
-			!Number.isFinite(threshold)
-		) {
+		if (typeof threshold !== 'number' || threshold <= 0 || !Number.isFinite(threshold)) {
 			throw new Error('SSE threshold must be a positive finite number');
 		}
 
@@ -606,7 +618,7 @@ export class CopcLayer implements CustomLayerInterface {
 				cameraPosition: [...cameraLngLat, cameraAltitude],
 				mapHeight: this.map.transform.height,
 				fov: this.map.transform.fov,
-				sseThreshold: this.sseThreshold,
+				sseThreshold: this.sseThreshold
 			});
 		} catch (error) {
 			console.error('Error updating points:', error);
@@ -616,24 +628,22 @@ export class CopcLayer implements CustomLayerInterface {
 	/**
 	 * Render the scene
 	 */
-	render(_: WebGLRenderingContext, options: CustomRenderMethodInput) {
+	render(_: WebGLRenderingContext, options: maplibregl.CustomRenderMethodInput) {
 		if (!this.map || !this.renderer) return;
 
 		// Update scene center periodically for precision
 		// We don't update it every frame to avoid cache invalidation
 		if (!this.sceneCenter || this.shouldUpdateSceneCenter()) {
 			const center = this.map.getCenter();
-			this.sceneCenter = MercatorCoordinate.fromLngLat(center);
-			
+			this.sceneCenter = maplibregl.MercatorCoordinate.fromLngLat(center);
+
 			// Invalidate cache to rebuild geometries with new center
 			this.clearCache();
 		}
 
 		// Get the original projection matrix from MapLibre
-		const originalMatrix = new THREE.Matrix4().fromArray(
-			options.defaultProjectionData.mainMatrix,
-		);
-		
+		const originalMatrix = new THREE.Matrix4().fromArray(options.defaultProjectionData.mainMatrix);
+
 		// Create a translation matrix to offset by the scene center
 		// This improves precision by keeping coordinates closer to origin
 		const translationMatrix = new THREE.Matrix4().makeTranslation(
@@ -641,39 +651,58 @@ export class CopcLayer implements CustomLayerInterface {
 			this.sceneCenter.y,
 			this.sceneCenter.z
 		);
-		
+
 		// Apply translation first, then projection
 		// P' = P * T where T translates from relative coordinates back to world
-		this.camera.projectionMatrix.multiplyMatrices(
-			originalMatrix,
-			translationMatrix
-		);
+		this.camera.projectionMatrix.multiplyMatrices(originalMatrix, translationMatrix);
 
 		// Update scene based on camera position
 		this.updatePoints();
 
+		// Update EDL render target sizes if needed
+		if (this.options.enableEDL) {
+			this.updateEDLSize();
+		}
+
 		// Render the scene
 		this.renderer.resetState();
-		this.renderer.render(this.scene, this.camera);
+
+		if (this.options.enableEDL && this.colorTarget && this.depthTarget && this.edlQuadScene && this.edlQuadCamera) {
+			// Render to EDL targets
+			this.renderer.setRenderTarget(this.depthTarget);
+			this.renderer.clear();
+			this.renderer.render(this.scene, this.camera);
+
+			this.renderer.setRenderTarget(this.colorTarget);
+			this.renderer.clear();
+			this.renderer.render(this.scene, this.camera);
+
+			// Apply EDL post-processing
+			this.renderer.setRenderTarget(null);
+			this.renderer.render(this.edlQuadScene, this.edlQuadCamera);
+		} else {
+			// Standard rendering
+			this.renderer.render(this.scene, this.camera);
+		}
 
 		this.map.triggerRepaint();
 	}
-	
+
 	/**
 	 * Determine if scene center should be updated
 	 * Updates when camera has moved significantly from the scene center
 	 */
 	private shouldUpdateSceneCenter(): boolean {
 		if (!this.sceneCenter || !this.map) return true;
-		
+
 		const currentCenter = this.map.getCenter();
-		const currentMercator = MercatorCoordinate.fromLngLat(currentCenter);
-		
+		const currentMercator = maplibregl.MercatorCoordinate.fromLngLat(currentCenter);
+
 		// Calculate distance from current center to scene center
 		const dx = currentMercator.x - this.sceneCenter.x;
 		const dy = currentMercator.y - this.sceneCenter.y;
 		const distance = Math.sqrt(dx * dx + dy * dy);
-		
+
 		// Update if moved more than 0.001 in Mercator units for higher precision
 		// This is approximately 100 meters at the equator
 		return distance > 0.001;
@@ -682,7 +711,7 @@ export class CopcLayer implements CustomLayerInterface {
 	/**
 	 * Clean up resources when layer is removed
 	 */
-	onRemove(_map: MapLibre, _gl: WebGLRenderingContext): void {
+	onRemove(_map: maplibregl.Map, _gl: WebGLRenderingContext): void {
 		try {
 			// Terminate worker
 			this.worker.terminate();
@@ -694,30 +723,128 @@ export class CopcLayer implements CustomLayerInterface {
 			this.visibleNodes.length = 0;
 			this.pendingRequests.clear();
 			this.requestQueue.length = 0;
+
+			// Clean up EDL resources
+			if (this.colorTarget) {
+				this.colorTarget.dispose();
+				this.colorTarget = undefined;
+			}
+			if (this.depthTarget) {
+				this.depthTarget.dispose();
+				this.depthTarget = undefined;
+			}
+			if (this.edlMaterial) {
+				this.edlMaterial.dispose();
+				this.edlMaterial = undefined;
+			}
+			if (this.edlQuadScene) {
+				this.edlQuadScene.clear();
+				this.edlQuadScene = undefined;
+			}
+			this.edlQuadCamera = undefined;
 		} catch (error) {
 			console.error('Error during layer cleanup:', error);
 		}
 	}
 
 	/**
-	 * Create Three.js material for point rendering
+	 * Setup Eye-Dome Lighting post-processing
 	 */
-	private createPointMaterial(): THREE.PointsMaterial {
-		const material = new THREE.PointsMaterial({
-			vertexColors: this.options.colorMode !== 'white',
-			size: this.options.pointSize,
-			depthTest: this.options.depthTest,
-			depthWrite: this.options.depthTest,
-			sizeAttenuation: true,
+	private setupEDL(): void {
+		if (!this.renderer || !this.map) return;
+
+		const width = this.map.getCanvas().width;
+		const height = this.map.getCanvas().height;
+
+		// Create render targets
+		this.colorTarget = new THREE.WebGLRenderTarget(width, height, {
+			minFilter: THREE.LinearFilter,
+			magFilter: THREE.LinearFilter,
+			format: THREE.RGBAFormat
 		});
 
-		if (this.options.colorMode === 'white') {
-			material.color.setHex(0xffffff);
-		}
+		this.depthTarget = new THREE.WebGLRenderTarget(width, height, {
+			minFilter: THREE.NearestFilter,
+			magFilter: THREE.NearestFilter,
+			format: THREE.RGBAFormat,
+			depthBuffer: true,
+			depthTexture: new THREE.DepthTexture(width, height)
+		});
 
-		return material;
+		// Create EDL shader material
+		this.edlMaterial = new THREE.ShaderMaterial({
+			uniforms: {
+				tColor: { value: this.colorTarget.texture },
+				tDepth: { value: this.depthTarget.depthTexture },
+				screenSize: { value: new THREE.Vector2(width, height) },
+				edlStrength: { value: this.options.edlStrength },
+				radius: { value: this.options.edlRadius },
+				opacity: { value: this.options.edlOpacity }
+			},
+			vertexShader: edlVertexShader,
+			fragmentShader: edlFragmentShader
+		});
+
+		// Setup fullscreen quad for post-processing
+		this.edlQuadScene = new THREE.Scene();
+		this.edlQuadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+		const geometry = new THREE.PlaneGeometry(2, 2);
+		const quad = new THREE.Mesh(geometry, this.edlMaterial);
+		this.edlQuadScene.add(quad);
 	}
 
+	/**
+	 * Update EDL render target sizes when canvas resizes
+	 */
+	private updateEDLSize(): void {
+		if (!this.map || !this.colorTarget || !this.depthTarget || !this.edlMaterial) return;
+
+		const width = this.map.getCanvas().width;
+		const height = this.map.getCanvas().height;
+
+		this.colorTarget.setSize(width, height);
+		this.depthTarget.setSize(width, height);
+		this.edlMaterial.uniforms.screenSize.value.set(width, height);
+	}
+
+	/**
+	 * Create Three.js material for point rendering
+	 */
+	private createPointMaterial(): THREE.ShaderMaterial | THREE.PointsMaterial {
+		if (this.options.enableEDL) {
+			// Use custom shader for EDL
+			return new THREE.ShaderMaterial({
+				uniforms: {
+					size: { value: this.options.pointSize },
+					scale: { value: window.devicePixelRatio },
+					useVertexColors: { value: this.options.colorMode !== 'white' },
+					pointColor: { value: new THREE.Color(0xffffff) }
+				},
+				vertexShader: pointsVertexShader,
+				fragmentShader: pointsFragmentShader,
+				vertexColors: this.options.colorMode !== 'white',
+				depthTest: this.options.depthTest,
+				depthWrite: this.options.depthTest,
+				transparent: false
+			});
+		} else {
+			// Use standard points material
+			const material = new THREE.PointsMaterial({
+				vertexColors: this.options.colorMode !== 'white',
+				size: this.options.pointSize,
+				depthTest: this.options.depthTest,
+				depthWrite: this.options.depthTest,
+				sizeAttenuation: true
+			});
+
+			if (this.options.colorMode === 'white') {
+				material.color.setHex(0xffffff);
+			}
+
+			return material;
+		}
+	}
 
 	// Public API methods
 
@@ -751,10 +878,9 @@ export class CopcLayer implements CustomLayerInterface {
 	public getNodeStats(): NodeStats {
 		return {
 			loaded: this.cacheManager.size(),
-			visible: this.visibleNodes.length,
+			visible: this.visibleNodes.length
 		};
 	}
-
 
 	/**
 	 * Clear the cache manually (useful for debugging or memory management)
@@ -762,5 +888,70 @@ export class CopcLayer implements CustomLayerInterface {
 	public clearCache(): void {
 		this.cacheManager.clear();
 		this.updateVisibleNodes(); // Refresh scene
+	}
+
+	/**
+	 * Enable or disable EDL effect
+	 */
+	public setEDLEnabled(enabled: boolean): void {
+		this.options.enableEDL = enabled;
+		if (enabled && !this.edlMaterial) {
+			this.setupEDL();
+		}
+		// Refresh materials
+		for (const nodeId of this.cacheManager.getCachedNodeIds()) {
+			const nodeData = this.cacheManager.get(nodeId);
+			if (nodeData) {
+				this.updateNodeMaterial(nodeData);
+			}
+		}
+		if (this.map) {
+			this.map.triggerRepaint();
+		}
+	}
+
+	/**
+	 * Update EDL parameters
+	 */
+	public updateEDLParameters(params: {
+		strength?: number;
+		radius?: number;
+		opacity?: number;
+	}): void {
+		if (!this.edlMaterial) return;
+
+		if (params.strength !== undefined) {
+			this.options.edlStrength = params.strength;
+			this.edlMaterial.uniforms.edlStrength.value = params.strength;
+		}
+		if (params.radius !== undefined) {
+			this.options.edlRadius = params.radius;
+			this.edlMaterial.uniforms.radius.value = params.radius;
+		}
+		if (params.opacity !== undefined) {
+			this.options.edlOpacity = params.opacity;
+			this.edlMaterial.uniforms.opacity.value = params.opacity;
+		}
+
+		if (this.map) {
+			this.map.triggerRepaint();
+		}
+	}
+
+	/**
+	 * Get current EDL parameters
+	 */
+	public getEDLParameters(): {
+		enabled: boolean;
+		strength: number;
+		radius: number;
+		opacity: number;
+	} {
+		return {
+			enabled: this.options.enableEDL,
+			strength: this.options.edlStrength,
+			radius: this.options.edlRadius,
+			opacity: this.options.edlOpacity
+		};
 	}
 }
