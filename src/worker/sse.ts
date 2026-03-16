@@ -1,59 +1,61 @@
-import { Vector3 } from 'three';
+export type Vec3 = [number, number, number]
+
+function distance(a: Vec3, b: Vec3): number {
+	const dx = a[0] - b[0]
+	const dy = a[1] - b[1]
+	const dz = a[2] - b[2]
+	return Math.sqrt(dx * dx + dy * dy + dz * dz)
+}
+
+function dot(a: Vec3, b: Vec3): number {
+	return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+function normalize(v: Vec3): Vec3 {
+	const len = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+	if (len === 0) return [0, 0, 0]
+	return [v[0] / len, v[1] / len, v[2] / len]
+}
 
 /**
- * Calculates the Screen Space Error (SSE) for a point cloud node.
- *
- * SSE represents how many pixels on screen the geometric error of a node occupies.
- * Higher SSE means the node's error is more visible, indicating it should be rendered
- * with higher detail (by loading its children).
- *
- * @param cameraCenter - The camera position in world space
- * @param center - The center of the node in world space
- * @param fov - The field of view in degrees
- * @param geometricError - The geometric error of the node (typically voxel size at that level)
- * @param screenHeight - The height of the screen in pixels
- * @param distanceFactor - Optional factor to adjust SSE based on distance (default: 1.0)
- * @returns The calculated Screen Space Error in pixels
+ * Calculates Screen Space Error (SSE) for a point cloud node.
+ * Higher SSE = more visible error = should render with higher detail.
  */
 export function computeScreenSpaceError(
-	cameraCenter: Vector3,
-	center: Vector3,
+	cameraCenter: Vec3,
+	center: Vec3,
 	fov: number,
 	geometricError: number,
 	screenHeight: number,
 	distanceFactor: number = 1.0,
-) {
-	// Distance between camera and node center
-	const distance = cameraCenter.distanceTo(center);
+): number {
+	const dist = distance(cameraCenter, center)
+	const fovRad = fov * (Math.PI / 180)
 
-	// Convert FOV from degrees to radians
-	const fovInRadians = fov * (Math.PI / 180);
-
-	// Calculate the base SSE using the perspective projection formula:
-	// SSE = (geometricError * screenHeight) / (2 * distance * tan(FOV/2))
 	let sse =
 		(geometricError * screenHeight) /
-		(2.0 * distance * Math.tan(fovInRadians / 2.0));
+		(2.0 * dist * Math.tan(fovRad / 2.0))
 
-	// Apply distance factor - reduces SSE for distant objects
-	// This helps prioritize loading nodes that are closer to the camera
+	// Apply distance factor
 	if (distanceFactor !== 1.0) {
-		const normalizedDistance = Math.min(1.0, distance / 1000.0); // Normalize to 0-1 range
+		const normalizedDistance = Math.min(1.0, dist / 1000.0)
 		const distanceAdjustment =
-			1.0 - normalizedDistance * (1.0 - distanceFactor);
-		sse *= distanceAdjustment;
+			1.0 - normalizedDistance * (1.0 - distanceFactor)
+		sse *= distanceAdjustment
 	}
 
-	// Apply frustum culling approximation
-	// If the node is far outside the view frustum, reduce its SSE
-	const viewVector = new Vector3().subVectors(center, cameraCenter).normalize();
-	const forward = new Vector3(0, 0, -1); // Assuming camera looks down negative Z
-	const dot = viewVector.dot(forward);
+	// Frustum culling approximation
+	const viewVector = normalize([
+		center[0] - cameraCenter[0],
+		center[1] - cameraCenter[1],
+		center[2] - cameraCenter[2],
+	])
+	const forward: Vec3 = [0, 0, -1]
+	const d = dot(viewVector, forward)
 
-	// If node is behind camera or at extreme angles, reduce SSE
-	if (dot < 0.0) {
-		sse *= Math.max(0.0, 1.0 + dot); // Gradually reduce SSE as angle increases
+	if (d < 0.0) {
+		sse *= Math.max(0.0, 1.0 + d)
 	}
 
-	return sse;
+	return sse
 }

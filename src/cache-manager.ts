@@ -1,329 +1,196 @@
-/**
- * Cache Management System for COPC Node Data
- * 
- * Implements efficient LRU-based caching on main thread to reduce
- * worker communication overhead and improve rendering performance.
- */
+import * as THREE from 'three'
 
-import * as THREE from 'three';
-
-/**
- * Cached node data structure containing all necessary information
- * for immediate rendering without worker communication
- */
 export interface CachedNodeData {
-	/** Unique node identifier (e.g., "3-4-5-6") */
-	nodeId: string;
-	/** Position buffer data for points (high precision) */
-	positions: Float64Array;
-	/** Color buffer data for points */
-	colors: Float32Array;
-	/** Number of points in this node */
-	pointCount: number;
-	/** Three.js geometry object (cached for reuse) */
-	geometry?: THREE.BufferGeometry;
-	/** Three.js points object (cached for reuse) */
-	points?: THREE.Points;
-	/** Material configuration used for this node */
+	nodeId: string
+	positions: Float64Array
+	colors: Float32Array
+	pointCount: number
+	geometry?: THREE.BufferGeometry
+	points?: THREE.Points
 	materialConfig: {
-		colorMode: string;
-		pointSize: number;
-		depthTest: boolean;
-	};
-	/** Last access timestamp for LRU algorithm */
-	lastAccessed: number;
-	/** Size estimate in bytes for memory management */
-	sizeBytes: number;
+		colorMode: string
+		pointSize: number
+		depthTest: boolean
+	}
+	lastAccessed: number
+	sizeBytes: number
 }
 
-
-/**
- * Configuration options for the cache manager
- */
 export interface CacheManagerOptions {
-	/** Maximum number of nodes to cache */
-	maxNodes?: number;
-	/** Maximum memory usage in bytes (default: 100MB) */
-	maxMemoryBytes?: number;
-	/** Enable verbose logging for debugging */
-	enableLogging?: boolean;
+	maxNodes?: number
+	maxMemoryBytes?: number
+	enableLogging?: boolean
 }
 
-/**
- * High-performance LRU cache manager for COPC node data
- * 
- * Features:
- * - LRU eviction strategy
- * - Memory usage monitoring
- * - Three.js object caching
- * - Performance metrics
- * - Efficient O(1) operations
- */
 export class CacheManager {
-	private cache = new Map<string, CachedNodeData>();
-	private accessOrder: string[] = [];
-	private memoryUsage: number = 0;
-	private options: Required<CacheManagerOptions>;
-	
-	/**
-	 * Create a new cache manager instance
-	 */
+	private cache = new Map<string, CachedNodeData>()
+	private accessOrder: string[] = []
+	private memoryUsage = 0
+	private options: Required<CacheManagerOptions>
+
 	constructor(options: CacheManagerOptions = {}) {
 		this.options = {
 			maxNodes: options.maxNodes ?? 100,
-			maxMemoryBytes: options.maxMemoryBytes ?? 100 * 1024 * 1024, // 100MB
+			maxMemoryBytes: options.maxMemoryBytes ?? 100 * 1024 * 1024,
 			enableLogging: options.enableLogging ?? false,
-		};
-		
-		this.log('Cache manager initialized', this.options);
+		}
 	}
-	
-	/**
-	 * Get cached node data if available
-	 * 
-	 * @param nodeId - Node identifier
-	 * @returns Cached data or null if not found
-	 */
+
 	get(nodeId: string): CachedNodeData | null {
-		const data = this.cache.get(nodeId);
-		
+		const data = this.cache.get(nodeId)
 		if (data) {
-			// Update LRU order
-			this.updateAccessOrder(nodeId);
-			data.lastAccessed = Date.now();
-			return data;
+			this.updateAccessOrder(nodeId)
+			data.lastAccessed = Date.now()
+			return data
 		}
-		return null;
+		return null
 	}
-	
-	/**
-	 * Store node data in cache
-	 * 
-	 * @param nodeData - Complete node data to cache
-	 * @param protectedNodes - Set of node IDs that should not be evicted
-	 */
+
 	set(nodeData: CachedNodeData, protectedNodes?: Set<string>): void {
-		const { nodeId } = nodeData;
-		
-		// Check if already exists (update case)
-		const existing = this.cache.get(nodeId);
+		const { nodeId } = nodeData
+		const existing = this.cache.get(nodeId)
 		if (existing) {
-			// Dispose old Three.js resources
-			this.disposeNodeResources(existing);
-			this.memoryUsage -= existing.sizeBytes;
+			this.disposeNodeResources(existing)
+			this.memoryUsage -= existing.sizeBytes
 		}
-		
-		// Ensure cache size limits before adding
-		this.ensureCacheLimits(nodeData.sizeBytes, protectedNodes);
-		
-		// Add to cache
-		nodeData.lastAccessed = Date.now();
-		this.cache.set(nodeId, nodeData);
-		this.updateAccessOrder(nodeId);
-		this.memoryUsage += nodeData.sizeBytes;
-		
-		this.log(`Cached node ${nodeId} (${this.formatBytes(nodeData.sizeBytes)})`);
+
+		this.ensureCacheLimits(nodeData.sizeBytes, protectedNodes)
+
+		nodeData.lastAccessed = Date.now()
+		this.cache.set(nodeId, nodeData)
+		this.updateAccessOrder(nodeId)
+		this.memoryUsage += nodeData.sizeBytes
+
+		this.log(`Cached node ${nodeId} (${this.formatBytes(nodeData.sizeBytes)})`)
 	}
-	
-	/**
-	 * Check if node is cached
-	 * 
-	 * @param nodeId - Node identifier
-	 * @returns True if cached
-	 */
+
 	has(nodeId: string): boolean {
-		return this.cache.has(nodeId);
+		return this.cache.has(nodeId)
 	}
-	
-	/**
-	 * Remove specific node from cache
-	 * 
-	 * @param nodeId - Node identifier
-	 * @returns True if node was removed
-	 */
+
 	delete(nodeId: string): boolean {
-		const data = this.cache.get(nodeId);
-		if (!data) return false;
-		
-		this.disposeNodeResources(data);
-		this.cache.delete(nodeId);
-		this.removeFromAccessOrder(nodeId);
-		this.memoryUsage -= data.sizeBytes;
-		
-		this.log(`Removed node ${nodeId} from cache`);
-		return true;
+		const data = this.cache.get(nodeId)
+		if (!data) return false
+
+		this.disposeNodeResources(data)
+		this.cache.delete(nodeId)
+		this.removeFromAccessOrder(nodeId)
+		this.memoryUsage -= data.sizeBytes
+
+		this.log(`Removed node ${nodeId} from cache`)
+		return true
 	}
-	
-	/**
-	 * Clear all cached data
-	 */
+
 	clear(): void {
-		// Dispose all Three.js resources
 		for (const data of this.cache.values()) {
-			this.disposeNodeResources(data);
+			this.disposeNodeResources(data)
 		}
-		
-		this.cache.clear();
-		this.accessOrder.length = 0;
-		this.memoryUsage = 0;
-		
-		this.log('Cache cleared');
+		this.cache.clear()
+		this.accessOrder.length = 0
+		this.memoryUsage = 0
 	}
-	
-	
-	/**
-	 * Update cache configuration
-	 */
-	updateOptions(newOptions: Partial<CacheManagerOptions>, protectedNodes?: Set<string>): void {
-		Object.assign(this.options, newOptions);
-		
-		
-		// Enforce new limits immediately
-		this.ensureCacheLimits(0, protectedNodes);
-		this.log('Cache options updated', this.options);
+
+	updateOptions(
+		newOptions: Partial<CacheManagerOptions>,
+		protectedNodes?: Set<string>,
+	): void {
+		Object.assign(this.options, newOptions)
+		this.ensureCacheLimits(0, protectedNodes)
 	}
-	
-	/**
-	 * Get all cached node IDs
-	 */
+
 	getCachedNodeIds(): string[] {
-		return Array.from(this.cache.keys());
+		return Array.from(this.cache.keys())
 	}
-	
-	/**
-	 * Get the number of cached items
-	 */
+
 	size(): number {
-		return this.cache.size;
+		return this.cache.size
 	}
-	
-	/**
-	 * Estimate memory usage of node data
-	 */
-	static estimateNodeSize(positions: Float64Array | Float32Array, colors: Float32Array): number {
-		// Float64Array: 8 bytes per float, Float32Array: 4 bytes per float
-		// Add overhead for objects and metadata
-		const positionSize = positions.length * (positions instanceof Float64Array ? 8 : 4);
-		const colorSize = colors.length * 4;
-		const objectOverhead = 1024; // Estimate for JS objects
-		return positionSize + colorSize + objectOverhead;
+
+	static estimateNodeSize(
+		positions: Float64Array | Float32Array,
+		colors: Float32Array,
+	): number {
+		const positionSize =
+			positions.length * (positions instanceof Float64Array ? 8 : 4)
+		const colorSize = colors.length * 4
+		return positionSize + colorSize + 1024
 	}
-	
-	/**
-	 * Create cached node data from raw buffers
-	 */
+
 	static createNodeData(
 		nodeId: string,
 		positions: Float64Array,
 		colors: Float32Array,
-		materialConfig: CachedNodeData['materialConfig']
+		materialConfig: CachedNodeData['materialConfig'],
 	): CachedNodeData {
 		return {
 			nodeId,
-			positions: new Float64Array(positions), // Copy to ensure independence
+			positions: new Float64Array(positions),
 			colors: new Float32Array(colors),
 			pointCount: positions.length / 3,
 			materialConfig: { ...materialConfig },
 			lastAccessed: Date.now(),
 			sizeBytes: CacheManager.estimateNodeSize(positions, colors),
-		};
+		}
 	}
-	
-	/**
-	 * Update LRU access order
-	 */
+
 	private updateAccessOrder(nodeId: string): void {
-		// Remove from current position
-		this.removeFromAccessOrder(nodeId);
-		// Add to end (most recently used)
-		this.accessOrder.push(nodeId);
+		this.removeFromAccessOrder(nodeId)
+		this.accessOrder.push(nodeId)
 	}
-	
-	/**
-	 * Remove node from access order array
-	 */
+
 	private removeFromAccessOrder(nodeId: string): void {
-		const index = this.accessOrder.indexOf(nodeId);
+		const index = this.accessOrder.indexOf(nodeId)
 		if (index > -1) {
-			this.accessOrder.splice(index, 1);
+			this.accessOrder.splice(index, 1)
 		}
 	}
-	
-	/**
-	 * Ensure cache stays within size and memory limits
-	 * Protects currently visible nodes from eviction to prevent infinite loops
-	 */
-	private ensureCacheLimits(newItemSize: number, protectedNodes?: Set<string>): void {
-		// Check if we need to make space
+
+	private ensureCacheLimits(
+		newItemSize: number,
+		protectedNodes?: Set<string>,
+	): void {
 		while (
-			(this.cache.size >= this.options.maxNodes) ||
-			(this.memoryUsage + newItemSize > this.options.maxMemoryBytes)
+			this.cache.size >= this.options.maxNodes ||
+			this.memoryUsage + newItemSize > this.options.maxMemoryBytes
 		) {
-			if (this.accessOrder.length === 0) break;
-			
-			// Find the first evictable node (not protected)
-			let lruNodeId: string | null = null;
-			for (let i = 0; i < this.accessOrder.length; i++) {
-				const nodeId = this.accessOrder[i];
-				if (!protectedNodes || !protectedNodes.has(nodeId)) {
-					lruNodeId = nodeId;
-					break;
+			if (this.accessOrder.length === 0) break
+
+			let lruNodeId: string | null = null
+			for (const nodeId of this.accessOrder) {
+				if (!protectedNodes?.has(nodeId)) {
+					lruNodeId = nodeId
+					break
 				}
 			}
-			
-			// If no evictable nodes found, break to prevent infinite loop
+
 			if (!lruNodeId) {
-				this.log('Warning: Cannot evict any nodes - all are protected. Cache limit exceeded.');
-				break;
+				this.log(
+					'Warning: Cannot evict any nodes - all are protected. Cache limit exceeded.',
+				)
+				break
 			}
-			
-			// Remove the evictable node
-			const success = this.delete(lruNodeId);
-			
-			if (!success) {
-				// Safety fallback - should not happen
-				const index = this.accessOrder.indexOf(lruNodeId);
-				if (index > -1) {
-					this.accessOrder.splice(index, 1);
-				}
-			}
+
+			this.delete(lruNodeId)
 		}
 	}
-	
-	/**
-	 * Dispose Three.js resources for a node
-	 */
+
 	private disposeNodeResources(data: CachedNodeData): void {
-		if (data.geometry) {
-			data.geometry.dispose();
-		}
+		data.geometry?.dispose()
 		if (data.points?.material instanceof THREE.Material) {
-			data.points.material.dispose();
+			data.points.material.dispose()
 		}
 	}
-	
-	
-	/**
-	 * Format bytes for human-readable display
-	 */
+
 	private formatBytes(bytes: number): string {
-		const sizes = ['B', 'KB', 'MB', 'GB'];
-		if (bytes === 0) return '0 B';
-		const i = Math.floor(Math.log(bytes) / Math.log(1024));
-		return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+		const sizes = ['B', 'KB', 'MB', 'GB']
+		if (bytes === 0) return '0 B'
+		const i = Math.floor(Math.log(bytes) / Math.log(1024))
+		return `${Math.round((bytes / 1024 ** i) * 100) / 100} ${sizes[i]}`
 	}
-	
-	/**
-	 * Conditional logging
-	 */
-	private log(message: string, data?: any): void {
+
+	private log(message: string): void {
 		if (this.options.enableLogging) {
-			const prefix = '[CacheManager]';
-			if (data) {
-				console.log(prefix, message, data);
-			} else {
-				console.log(prefix, message);
-			}
+			console.log('[CacheManager]', message)
 		}
 	}
 }

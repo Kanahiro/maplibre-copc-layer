@@ -5,13 +5,12 @@ uniform vec3 pointColor;
 #endif
 
 void main() {
-    // Create circular points
     vec2 cxy = 2.0 * gl_PointCoord - 1.0;
     float r = dot(cxy, cxy);
     if (r > 1.0) {
         discard;
     }
-    
+
     #ifdef USE_COLOR
         gl_FragColor = vec4(vColor, 1.0);
     #else

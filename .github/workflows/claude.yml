@@ -35,6 +35,6 @@ jobs:
           claude_args: |
             --append-system-prompt "実装を依頼された場合、コード変更後に必ず Pull Request を作成してください。PR本文には Closes #<Issue番号> を含めてください。GitHub操作にはghコマンドではなくMCPツール(mcp__github__*)を使ってください。"
             --model claude-opus-4-6
-            --allowed-tools "mcp__github__create_pull_request,mcp__github__get_pull_request,mcp__github__list_pull_requests,mcp__github__create_issue,mcp__github__get_issue,mcp__github__list_issues,mcp__github__add_issue_comment,mcp__github__create_branch,mcp__github__push_files,mcp__github__search_code,mcp__github__get_file_contents,mcp__github__create_or_update_file"
+            --allowed-tools "mcp__github__create_pull_request,mcp__github__get_pull_request,mcp__github__list_pull_requests,mcp__github__create_issue,mcp__github__get_issue,mcp__github__list_issues,mcp__github__add_issue_comment,mcp__github__create_branch,mcp__github__push_files,mcp__github__search_code,mcp__github__get_file_contents,mcp__github__create_or_update_file,WebFetch,WebSearch"
           additional_permissions: |
             actions: read

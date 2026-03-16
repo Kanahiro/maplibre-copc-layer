@@ -1,40 +1,56 @@
-name: github pages
+name: Deploy demo to GitHub Pages
 
 on:
   push:
     branches:
-      - main
+      - next
     paths:
       - 'src/**'
-      - 'example/**'
+      - 'dev/**'
+      - 'index.html'
   workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
 
 jobs:
   build-deploy:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
-      # Node.js環境のセットアップを行う
-      - name: setup node
-        uses: actions/setup-node@v1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: '22.x'
+          node-version: '22'
+          cache: pnpm
 
-      - name: install pnpm
-        run: npm install -g pnpm
-
-      - name: install
+      - name: Install dependencies
         run: pnpm install
 
-      - name: build
-        run: pnpm build
+      - name: Build demo
+        run: pnpm run build:demo
 
-      - name: add nojekyll
-        run: touch ./demo/.nojekyll
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
 
-      - name: deploy
-        uses: peaceiris/actions-gh-pages@v3
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./demo
+          path: demo
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
