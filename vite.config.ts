@@ -1,18 +1,8 @@
-import { defineConfig } from 'vite';
+import tsdownConfig from './tsdown.config.js';
+
+import { defineConfig } from 'vite-plus';
 
 export default defineConfig({
-	worker: {
-		format: 'es',
-	},
-	root: './example',
-	base: './',
-	build: {
-		outDir: '../demo',
-		rollupOptions: {
-			input: {
-				index: './example/index.html',
-			},
-			external: ['laz-perf'],
-		},
-	},
+	pack: tsdownConfig,
+	lint: { options: { typeAware: true, typeCheck: true } },
 });

@@ -1,55 +1,46 @@
 {
-	"name": "maplibre-copc-layer",
-	"version": "1.0.0",
-	"description": "A library for loading and rendering Cloud-Optimized Point Cloud (COPC) data in MapLibre GL JS",
-	"type": "module",
-	"main": "./dist/index.js",
-	"types": "./dist/index.d.ts",
-	"exports": {
-		".": {
-			"import": "./dist/index.js",
-			"types": "./dist/index.d.ts"
-		}
-	},
-	"files": [
-		"dist",
-		"src"
-	],
-	"scripts": {
-		"dev": "vite",
-		"build": "tsc && vite build && cp src/worker/laz-perf.wasm demo/assets",
-		"build:lib": "tsc --project tsconfig.lib.json",
-		"preview": "vite preview"
-	},
-	"keywords": [
-		"copc",
-		"point-cloud",
-		"maplibre",
-		"three.js",
-		"webgl",
-		"geospatial",
-		"lidar"
-	],
-	"author": "kanahiro",
-	"license": "MIT",
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/kanahiro/copc-viewer.git"
-	},
-	"devDependencies": {
-		"@types/proj4": "^2.5.6",
-		"@types/three": "^0.173.0",
-		"lil-gui": "^0.20.0",
-		"maplibre-gl": "^5.1.1",
-		"proj4": "^2.15.0",
-		"proj4js": "^10.0.0",
-		"three": "^0.173.0",
-		"typescript": "~5.7.2",
-		"vite": "^6.1.0"
-	},
-	"dependencies": {
-		"copc": "^0.0.8",
-		"laz-perf": "^0.0.7",
-		"maplibre-gl-gsi-terrain": "^2.2.0"
-	}
+  "name": "maplibre-copc-layer",
+  "type": "module",
+  "version": "0.0.0",
+  "description": "A starter for creating a TypeScript package.",
+  "author": "Author Name <author.name@mail.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/author/library#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/author/library.git"
+  },
+  "bugs": {
+    "url": "https://github.com/author/library/issues"
+  },
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "vp pack",
+    "dev": "vite dev",
+    "test": "vp test",
+    "typecheck": "tsc --noEmit",
+    "release": "bumpp",
+    "prepublishOnly": "pnpm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@typescript/native-preview": "7.0.0-dev.20260316.1",
+    "bumpp": "^11.0.1",
+    "typescript": "^5.9.3",
+    "vitest": "npm:@voidzero-dev/vite-plus-test@latest",
+    "vite-plus": "latest"
+  },
+  "pnpm": {
+    "overrides": {
+      "vite": "npm:@voidzero-dev/vite-plus-core@latest",
+      "vitest": "npm:@voidzero-dev/vite-plus-test@latest"
+    }
+  },
+  "packageManager": "pnpm@10.32.1"
 }
