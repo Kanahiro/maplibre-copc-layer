@@ -3,7 +3,7 @@ name: Deploy demo to GitHub Pages
 on:
   push:
     branches:
-      - next
+      - main
     paths:
       - 'src/**'
       - 'dev/**'
