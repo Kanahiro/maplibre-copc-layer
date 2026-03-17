@@ -24,7 +24,6 @@ export interface CacheManagerOptions {
 
 export class CacheManager {
 	private cache = new Map<string, CachedNodeData>()
-	private accessOrder: string[] = []
 	private memoryUsage = 0
 	private options: Required<CacheManagerOptions>
 
@@ -39,7 +38,9 @@ export class CacheManager {
 	get(nodeId: string): CachedNodeData | null {
 		const data = this.cache.get(nodeId)
 		if (data) {
-			this.updateAccessOrder(nodeId)
+			// Move to end of Map iteration order (most recently used)
+			this.cache.delete(nodeId)
+			this.cache.set(nodeId, data)
 			data.lastAccessed = Date.now()
 			return data
 		}
@@ -52,13 +53,13 @@ export class CacheManager {
 		if (existing) {
 			this.disposeNodeResources(existing)
 			this.memoryUsage -= existing.sizeBytes
+			this.cache.delete(nodeId)
 		}
 
 		this.ensureCacheLimits(nodeData.sizeBytes, protectedNodes)
 
 		nodeData.lastAccessed = Date.now()
 		this.cache.set(nodeId, nodeData)
-		this.updateAccessOrder(nodeId)
 		this.memoryUsage += nodeData.sizeBytes
 
 		this.log(`Cached node ${nodeId} (${this.formatBytes(nodeData.sizeBytes)})`)
@@ -74,7 +75,6 @@ export class CacheManager {
 
 		this.disposeNodeResources(data)
 		this.cache.delete(nodeId)
-		this.removeFromAccessOrder(nodeId)
 		this.memoryUsage -= data.sizeBytes
 
 		this.log(`Removed node ${nodeId} from cache`)
@@ -86,7 +86,6 @@ export class CacheManager {
 			this.disposeNodeResources(data)
 		}
 		this.cache.clear()
-		this.accessOrder.length = 0
 		this.memoryUsage = 0
 	}
 
@@ -133,18 +132,6 @@ export class CacheManager {
 		}
 	}
 
-	private updateAccessOrder(nodeId: string): void {
-		this.removeFromAccessOrder(nodeId)
-		this.accessOrder.push(nodeId)
-	}
-
-	private removeFromAccessOrder(nodeId: string): void {
-		const index = this.accessOrder.indexOf(nodeId)
-		if (index > -1) {
-			this.accessOrder.splice(index, 1)
-		}
-	}
-
 	private ensureCacheLimits(
 		newItemSize: number,
 		protectedNodes?: Set<string>,
@@ -153,10 +140,11 @@ export class CacheManager {
 			this.cache.size >= this.options.maxNodes ||
 			this.memoryUsage + newItemSize > this.options.maxMemoryBytes
 		) {
-			if (this.accessOrder.length === 0) break
+			if (this.cache.size === 0) break
 
+			// Map iterates in insertion order; first key is the LRU candidate
 			let lruNodeId: string | null = null
-			for (const nodeId of this.accessOrder) {
+			for (const nodeId of this.cache.keys()) {
 				if (!protectedNodes?.has(nodeId)) {
 					lruNodeId = nodeId
 					break

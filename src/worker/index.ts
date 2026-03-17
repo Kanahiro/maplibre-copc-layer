@@ -65,13 +65,6 @@ function calcCubeCenter(
 	]
 }
 
-function getPoint(
-	getters: ((index: number) => number)[],
-	index: number,
-): number[] {
-	return getters.map((get) => get(index))
-}
-
 async function initCopc(initUrl: string) {
 	try {
 		copc = await Copc.create(initUrl)
@@ -151,11 +144,23 @@ async function loadNode(node: string) {
 			view.dimensions['Blue']
 		const hasIntensity = view.dimensions['Intensity']
 
-		for (let i = 0; i < targetNode.pointCount; i++) {
-			const xyzGetters = ['X', 'Y', 'Z'].map(view.getter)
-			const point = getPoint(xyzGetters, i)
+		const getX = view.getter('X')
+		const getY = view.getter('Y')
+		const getZ = view.getter('Z')
+		const getRed = hasRgb ? view.getter('Red') : null
+		const getGreen = hasRgb ? view.getter('Green') : null
+		const getBlue = hasRgb ? view.getter('Blue') : null
+		const getIntensity = hasIntensity ? view.getter('Intensity') : null
 
-			const [lon, lat] = proj.inverse([point[0], point[1]])
+		const cubeMinZ = copc.info.cube[2]
+		const cubeRangeZ = copc.info.cube[5] - cubeMinZ
+
+		for (let i = 0; i < targetNode.pointCount; i++) {
+			const px = getX(i)
+			const py = getY(i)
+			const pz = getZ(i)
+
+			const [lon, lat] = proj.inverse([px, py])
 			const lonRad = lon * PI_180
 			const latRad = lat * PI_180
 
@@ -163,7 +168,7 @@ async function loadNode(node: string) {
 			const sinLat = Math.sin(latRad)
 			const k = (1 + sinLat) / (1 - sinLat)
 			const mercY = 0.5 - Math.log(k) / (4 * Math.PI)
-			const mercZ = point[2] / EARTH_CIRCUMFERENCE
+			const mercZ = pz / EARTH_CIRCUMFERENCE
 
 			positions[i * 3] = mercX
 			positions[i * 3 + 1] = mercY
@@ -171,21 +176,17 @@ async function loadNode(node: string) {
 
 			switch (colorMode) {
 				case 'rgb':
-					if (hasRgb) {
-						const colorGetters = ['Red', 'Green', 'Blue'].map(view.getter)
-						const rgb = getPoint(colorGetters, i)
-						colors[i * 3] = rgb[0] / 65535
-						colors[i * 3 + 1] = rgb[1] / 65535
-						colors[i * 3 + 2] = rgb[2] / 65535
+					if (getRed && getGreen && getBlue) {
+						colors[i * 3] = getRed(i) / 65535
+						colors[i * 3 + 1] = getGreen(i) / 65535
+						colors[i * 3 + 2] = getBlue(i) / 65535
 					} else {
 						colors[i * 3] = colors[i * 3 + 1] = colors[i * 3 + 2] = 1
 					}
 					break
 
 				case 'height': {
-					const normalizedHeight =
-						(point[2] - copc.info.cube[2]) /
-						(copc.info.cube[5] - copc.info.cube[2])
+					const normalizedHeight = (pz - cubeMinZ) / cubeRangeZ
 					colors[i * 3] = Math.min(1, Math.max(0, normalizedHeight * 2))
 					colors[i * 3 + 1] = Math.min(
 						1,
@@ -204,9 +205,8 @@ async function loadNode(node: string) {
 				}
 
 				case 'intensity':
-					if (hasIntensity) {
-						const intensityGetter = view.getter('Intensity')
-						const intensity = intensityGetter(i) / 65535
+					if (getIntensity) {
+						const intensity = getIntensity(i) / 65535
 						colors[i * 3] = colors[i * 3 + 1] = colors[i * 3 + 2] = intensity
 					} else {
 						colors[i * 3] = colors[i * 3 + 1] = colors[i * 3 + 2] = 1
@@ -238,17 +238,12 @@ async function loadNode(node: string) {
 	}
 }
 
-let updateCount = 0
-
 function updatePoints(
 	cameraPosition: [number, number, number],
 	mapHeight: number,
 	fov: number,
 	sseThreshold: number,
 ) {
-	if (updateCount++ < 10) return
-	updateCount = 0
-
 	if (!copc) {
 		self.postMessage({ type: 'error', message: 'COPC not initialized' })
 		return
@@ -288,7 +283,6 @@ function updatePoints(
 			type: 'nodesToLoad',
 			nodes: visibleNodes,
 			cameraPosition,
-			sseThreshold,
 		})
 	} catch (error) {
 		self.postMessage({

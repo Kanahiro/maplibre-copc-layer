@@ -66,7 +66,6 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 	public readonly cacheManager: CacheManager
 
 	private readonly options: ResolvedOptions
-	private sseThreshold: number
 	private visibleNodes: string[] = []
 	private workerInitialized = false
 	private pendingRequests = new Set<string>()
@@ -78,6 +77,11 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 	private edlMaterial?: THREE.ShaderMaterial
 	private edlQuadScene?: THREE.Scene
 	private edlQuadCamera?: THREE.OrthographicCamera
+	private readonly _tempMatrix1 = new THREE.Matrix4()
+	private readonly _tempMatrix2 = new THREE.Matrix4()
+	private _lastEdlWidth = 0
+	private _lastEdlHeight = 0
+	private _lastUpdatePointsTime = 0
 
 	constructor(
 		url: string,
@@ -87,7 +91,6 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		this.id = layerId
 		this.url = url
 		this.options = { ...DEFAULT_OPTIONS, ...options }
-		this.sseThreshold = this.options.sseThreshold
 
 		this.cacheManager = new CacheManager({
 			maxNodes: this.options.maxCacheSize,
@@ -248,6 +251,13 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		}
 	}
 
+	private rebuildAllMaterials(): void {
+		for (const nodeId of this.cacheManager.getCachedNodeIds()) {
+			const nodeData = this.cacheManager.get(nodeId)
+			if (nodeData) this.updateNodeMaterial(nodeData)
+		}
+	}
+
 	private removeFromRequestQueue(nodeId: string): void {
 		const index = this.requestQueue.indexOf(nodeId)
 		if (index > -1) this.requestQueue.splice(index, 1)
@@ -335,15 +345,11 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 
 	public setPointSize(size: number): void {
 		this.options.pointSize = size
-		for (const nodeId of this.cacheManager.getCachedNodeIds()) {
-			const nodeData = this.cacheManager.get(nodeId)
-			if (nodeData) this.updateNodeMaterial(nodeData)
-		}
+		this.rebuildAllMaterials()
 		this.map?.triggerRepaint()
 	}
 
 	public setSseThreshold(threshold: number): void {
-		this.sseThreshold = threshold
 		this.options.sseThreshold = threshold
 		this.updatePoints()
 		this.map?.triggerRepaint()
@@ -351,15 +357,16 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 
 	public toggleDepthTest(enabled: boolean): void {
 		this.options.depthTest = enabled
-		for (const nodeId of this.cacheManager.getCachedNodeIds()) {
-			const nodeData = this.cacheManager.get(nodeId)
-			if (nodeData) this.updateNodeMaterial(nodeData)
-		}
+		this.rebuildAllMaterials()
 		this.map?.triggerRepaint()
 	}
 
 	private updatePoints(): void {
 		if (!this.map || !this.workerInitialized) return
+
+		const now = performance.now()
+		if (now - this._lastUpdatePointsTime < 100) return
+		this._lastUpdatePointsTime = now
 
 		const cameraLngLat = this.map.transform.getCameraLngLat().toArray()
 		const cameraAltitude = this.map.transform.getCameraAltitude()
@@ -369,7 +376,7 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 			cameraPosition: [...cameraLngLat, cameraAltitude],
 			mapHeight: this.map.transform.height,
 			fov: this.map.transform.fov,
-			sseThreshold: this.sseThreshold,
+			sseThreshold: this.options.sseThreshold,
 		})
 	}
 
@@ -385,17 +392,15 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 			this.clearCache()
 		}
 
-		const originalMatrix = new THREE.Matrix4().fromArray(
-			options.defaultProjectionData.mainMatrix,
-		)
-		const translationMatrix = new THREE.Matrix4().makeTranslation(
+		this._tempMatrix1.fromArray(options.defaultProjectionData.mainMatrix)
+		this._tempMatrix2.makeTranslation(
 			this.sceneCenter.x,
 			this.sceneCenter.y,
 			this.sceneCenter.z,
 		)
 		this.camera.projectionMatrix.multiplyMatrices(
-			originalMatrix,
-			translationMatrix,
+			this._tempMatrix1,
+			this._tempMatrix2,
 		)
 
 		this.updatePoints()
@@ -512,6 +517,10 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		const width = this.map.getCanvas().width
 		const height = this.map.getCanvas().height
 
+		if (width === this._lastEdlWidth && height === this._lastEdlHeight) return
+
+		this._lastEdlWidth = width
+		this._lastEdlHeight = height
 		this.colorTarget.setSize(width, height)
 		this.depthTarget.setSize(width, height)
 		this.edlMaterial.uniforms.screenSize.value.set(width, height)
@@ -561,7 +570,7 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 	}
 
 	public getSseThreshold(): number {
-		return this.sseThreshold
+		return this.options.sseThreshold
 	}
 
 	public isDepthTestEnabled(): boolean {
@@ -593,10 +602,7 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		if (enabled && !this.edlMaterial) {
 			this.setupEDL()
 		}
-		for (const nodeId of this.cacheManager.getCachedNodeIds()) {
-			const nodeData = this.cacheManager.get(nodeId)
-			if (nodeData) this.updateNodeMaterial(nodeData)
-		}
+		this.rebuildAllMaterials()
 		this.map?.triggerRepaint()
 	}
 
