@@ -23,6 +23,7 @@ interface UpdatePointsMessage {
 	mapHeight: number
 	fov: number
 	sseThreshold: number
+	zoom: number
 }
 
 interface CancelRequestsMessage {
@@ -255,11 +256,21 @@ function updatePoints(
 			cameraPosition[2],
 		] as Vec3
 
+		// Cap effective distance so the root node's SSE never drops below
+		// the threshold, preventing points from disappearing at extreme
+		// camera altitudes (e.g. Globe View at low zoom levels).
+		// Derived from: SSE = (geometricError * screenHeight) / (2 * dist * tan(fov/2))
+		// Solving for dist when SSE = sseThreshold:
+		const fovRad = fov * (Math.PI / 180)
+		const rootGeometricError = copc.info.spacing
+		const maxDistance =
+			(rootGeometricError * mapHeight) /
+			(2 * sseThreshold * Math.tan(fovRad / 2))
+
 		const visibleNodes: string[] = []
 
 		for (const [nodeId, center] of Object.entries(nodeCenters)) {
 			const depth = Number.parseInt(nodeId.split('-')[0])
-			const distanceFactor = Math.max(0.5, 1.0 - depth * 0.1)
 
 			const sse = computeScreenSpaceError(
 				cameraWorld,
@@ -267,7 +278,7 @@ function updatePoints(
 				fov,
 				copc.info.spacing * 0.5 ** depth,
 				mapHeight,
-				distanceFactor,
+				maxDistance,
 			)
 
 			if (sse > sseThreshold) {

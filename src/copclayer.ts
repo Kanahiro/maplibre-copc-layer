@@ -375,6 +375,7 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 			mapHeight: this.map.transform.height,
 			fov: this.map.transform.fov,
 			sseThreshold: this.options.sseThreshold,
+			zoom: this.map.getZoom(),
 		})
 	}
 
