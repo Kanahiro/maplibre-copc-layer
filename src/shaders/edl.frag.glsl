@@ -3,8 +3,6 @@ uniform sampler2D tColor;
 uniform vec2 screenSize;
 uniform float edlStrength;
 uniform float radius;
-uniform float opacity;
-
 varying vec2 vUv;
 
 float readDepth(sampler2D depthSampler, vec2 coord) {
@@ -47,5 +45,5 @@ void main() {
     response /= 24.0;
     float edl = exp(-response * edlStrength);
 
-    gl_FragColor = vec4(color.rgb * edl, color.a * opacity);
+    gl_FragColor = vec4(color.rgb * edl, color.a);
 }
