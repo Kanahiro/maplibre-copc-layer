@@ -119,7 +119,7 @@ sseThresholdInput.addEventListener('input', () => {
 });
 
 depthTestInput.addEventListener('change', () => {
-	copcLayer?.toggleDepthTest(depthTestInput.checked);
+	copcLayer?.setDepthTest(depthTestInput.checked);
 });
 
 enableEDLInput.addEventListener('change', () => {

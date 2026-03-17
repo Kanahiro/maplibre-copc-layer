@@ -353,7 +353,7 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		this.map?.triggerRepaint()
 	}
 
-	public toggleDepthTest(enabled: boolean): void {
+	public setDepthTest(enabled: boolean): void {
 		this.options.depthTest = enabled
 		this.rebuildAllMaterials()
 		this.map?.triggerRepaint()
@@ -571,7 +571,7 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		return this.options.sseThreshold
 	}
 
-	public isDepthTestEnabled(): boolean {
+	public getDepthTest(): boolean {
 		return this.options.depthTest
 	}
 

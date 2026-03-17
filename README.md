@@ -82,7 +82,7 @@ new CopcLayer(url: string, options?: CopcLayerOptions, layerId?: string)
 |---|---|
 | `setPointSize(size)` | Update point size |
 | `setSseThreshold(threshold)` | Update SSE threshold |
-| `toggleDepthTest(enabled)` | Toggle depth testing |
+| `setDepthTest(enabled)` | Set depth testing |
 | `setEDLEnabled(enabled)` | Toggle EDL |
 | `updateEDLParameters({ strength?, radius? })` | Update EDL parameters |
 | `updateCacheConfig(config)` | Update cache options at runtime |
@@ -90,7 +90,7 @@ new CopcLayer(url: string, options?: CopcLayerOptions, layerId?: string)
 | `getPointSize()` | Get current point size |
 | `getColorMode()` | Get current color mode |
 | `getSseThreshold()` | Get current SSE threshold |
-| `isDepthTestEnabled()` | Check depth test state |
+| `getDepthTest()` | Get depth test state |
 | `getEDLParameters()` | Get EDL parameters |
 | `getOptions()` | Get all options |
 | `isLoading()` | Check if data is loading |
