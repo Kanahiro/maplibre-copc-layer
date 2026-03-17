@@ -45,9 +45,6 @@ const edlStrengthInput = document.getElementById('edlStrength') as HTMLInputElem
 const edlStrengthVal = document.getElementById('edlStrength-val') as HTMLSpanElement;
 const edlRadiusInput = document.getElementById('edlRadius') as HTMLInputElement;
 const edlRadiusVal = document.getElementById('edlRadius-val') as HTMLSpanElement;
-const edlOpacityInput = document.getElementById('edlOpacity') as HTMLInputElement;
-const edlOpacityVal = document.getElementById('edlOpacity-val') as HTMLSpanElement;
-
 // Restore COPC URL from query params
 const params = new URLSearchParams(window.location.search);
 const initialUrl = params.get('copc');
@@ -73,7 +70,6 @@ function loadCopc(copcUrl: string) {
 	const enableEDL = enableEDLInput.checked;
 	const edlStrength = Number(edlStrengthInput.value);
 	const edlRadius = Number(edlRadiusInput.value);
-	const edlOpacity = Number(edlOpacityInput.value);
 
 	copcLayer = new CopcLayer(copcUrl, {
 		pointSize,
@@ -83,7 +79,6 @@ function loadCopc(copcUrl: string) {
 		enableEDL,
 		edlStrength,
 		edlRadius,
-		edlOpacity,
 		onInitialized: (message) => {
 			map.flyTo({ center: message.center, zoom: 16 });
 		},
@@ -141,12 +136,6 @@ edlRadiusInput.addEventListener('input', () => {
 	const v = Number(edlRadiusInput.value);
 	edlRadiusVal.textContent = String(v);
 	copcLayer?.updateEDLParameters({ radius: v });
-});
-
-edlOpacityInput.addEventListener('input', () => {
-	const v = Number(edlOpacityInput.value);
-	edlOpacityVal.textContent = String(v);
-	copcLayer?.updateEDLParameters({ opacity: v });
 });
 
 map.on('load', () => {

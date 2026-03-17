@@ -19,7 +19,6 @@ export interface CopcLayerOptions {
 	enableEDL?: boolean
 	edlStrength?: number
 	edlRadius?: number
-	edlOpacity?: number
 	/** Path to laz-perf.wasm file for LAZ decompression */
 	wasmPath?: string
 	onInitialized?: (message: {
@@ -42,7 +41,6 @@ const DEFAULT_OPTIONS: ResolvedOptions = {
 	enableEDL: false,
 	edlStrength: 0.4,
 	edlRadius: 1.5,
-	edlOpacity: 1.0,
 	wasmPath: undefined,
 	onInitialized: () => {},
 } as const
@@ -496,7 +494,6 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 				screenSize: { value: new THREE.Vector2(width, height) },
 				edlStrength: { value: this.options.edlStrength },
 				radius: { value: this.options.edlRadius },
-				opacity: { value: this.options.edlOpacity },
 			},
 			vertexShader: edlVertexShader,
 			fragmentShader: edlFragmentShader,
@@ -609,7 +606,6 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 	public updateEDLParameters(params: {
 		strength?: number
 		radius?: number
-		opacity?: number
 	}): void {
 		if (!this.edlMaterial) return
 
@@ -621,10 +617,6 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 			this.options.edlRadius = params.radius
 			this.edlMaterial.uniforms.radius.value = params.radius
 		}
-		if (params.opacity !== undefined) {
-			this.options.edlOpacity = params.opacity
-			this.edlMaterial.uniforms.opacity.value = params.opacity
-		}
 
 		this.map?.triggerRepaint()
 	}
@@ -633,13 +625,11 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		enabled: boolean
 		strength: number
 		radius: number
-		opacity: number
 	} {
 		return {
 			enabled: this.options.enableEDL,
 			strength: this.options.edlStrength,
 			radius: this.options.edlRadius,
-			opacity: this.options.edlOpacity,
 		}
 	}
 }
