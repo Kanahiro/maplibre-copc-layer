@@ -9,4 +9,5 @@ export {
 	type CachedNodeData,
 	type CacheManagerOptions,
 } from './cache-manager'
+export { GlobeControl } from './globe-control'
 export { computeScreenSpaceError, type Vec3 } from './worker/sse'

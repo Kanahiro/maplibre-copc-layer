@@ -1,6 +1,6 @@
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { CopcLayer, type ColorMode } from '../src/index';
+import { CopcLayer, GlobeControl, type ColorMode } from '../src/index';
 
 const map = new maplibregl.Map({
 	container: 'map',
@@ -146,6 +146,8 @@ edlRadiusInput.addEventListener('input', () => {
 	edlRadiusVal.textContent = String(v);
 	copcLayer?.updateEDLParameters({ radius: v });
 });
+
+map.addControl(new GlobeControl());
 
 map.on('load', () => {
 	if (initialUrl) {
