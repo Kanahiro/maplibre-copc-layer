@@ -107,7 +107,7 @@ describe('computeScreenSpaceError', () => {
 		// Simulate Globe View at low zoom: camera at 20,000,000m altitude
 		const highCamera: Vec3 = [500000, 500000, 20000000]
 		const nodeCenter: Vec3 = [500000, 500000, 100]
-		const geometricError = 100 // root node spacing
+		const rootSpacing = 100 // root node spacing
 		const sseThreshold = 8
 
 		// Without maxDistance cap, SSE approaches 0
@@ -115,22 +115,25 @@ describe('computeScreenSpaceError', () => {
 			highCamera,
 			nodeCenter,
 			fov,
-			geometricError,
+			rootSpacing,
 			screenHeight,
 		)
 		expect(sseNoCap).toBeLessThan(sseThreshold)
 
-		// With maxDistance cap (simulating cubeMaxDim * 20), SSE is reasonable
-		const cubeMaxDim = 1000 // 1km cube
-		const maxDistance = cubeMaxDim * 20
+		// maxDistance derived from SSE formula so root node SSE = sseThreshold
+		const fovRad = fov * (Math.PI / 180)
+		const maxDistance =
+			(rootSpacing * screenHeight) /
+			(2 * sseThreshold * Math.tan(fovRad / 2))
 		const sseCapped = computeScreenSpaceError(
 			highCamera,
 			nodeCenter,
 			fov,
-			geometricError,
+			rootSpacing,
 			screenHeight,
 			maxDistance,
 		)
-		expect(sseCapped).toBeGreaterThan(sseThreshold)
+		// SSE at maxDistance equals sseThreshold (root node stays visible)
+		expect(sseCapped).toBeCloseTo(sseThreshold, 5)
 	})
 })

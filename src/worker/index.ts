@@ -256,14 +256,16 @@ function updatePoints(
 			cameraPosition[2],
 		] as Vec3
 
-		// Cap effective distance based on cube dimensions to prevent SSE
-		// from approaching 0 at very high camera altitudes (Globe View)
-		const cubeMaxDim = Math.max(
-			copc.info.cube[3] - copc.info.cube[0],
-			copc.info.cube[4] - copc.info.cube[1],
-			copc.info.cube[5] - copc.info.cube[2],
-		)
-		const maxDistance = cubeMaxDim * 20
+		// Cap effective distance so the root node's SSE never drops below
+		// the threshold, preventing points from disappearing at extreme
+		// camera altitudes (e.g. Globe View at low zoom levels).
+		// Derived from: SSE = (geometricError * screenHeight) / (2 * dist * tan(fov/2))
+		// Solving for dist when SSE = sseThreshold:
+		const fovRad = fov * (Math.PI / 180)
+		const rootGeometricError = copc.info.spacing
+		const maxDistance =
+			(rootGeometricError * mapHeight) /
+			(2 * sseThreshold * Math.tan(fovRad / 2))
 
 		const visibleNodes: string[] = []
 
