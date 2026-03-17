@@ -50,6 +50,42 @@
       font-size: 12px;
       color: #666;
     }
+    #params {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid #eee;
+      display: none;
+    }
+    #params.visible { display: block; }
+    .param-group { margin-bottom: 6px; }
+    .param-group label {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: #555;
+      margin-bottom: 2px;
+    }
+    .param-group label span { color: #333; font-weight: 500; }
+    .param-group input[type="range"] { width: 100%; }
+    .param-group select {
+      width: 100%;
+      padding: 4px 6px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    .param-section {
+      font-size: 11px;
+      font-weight: 600;
+      color: #999;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin: 8px 0 4px;
+      padding-top: 6px;
+      border-top: 1px solid #f0f0f0;
+    }
+    .param-section:first-child { border-top: none; margin-top: 0; padding-top: 0; }
   </style>
 </head>
 <body>
@@ -59,6 +95,51 @@
     <input id="url-input" type="text" placeholder="Enter COPC file URL (.copc.laz)" />
     <button id="load-btn">Load Point Cloud</button>
     <div id="stats"></div>
+    <div id="params">
+      <div class="param-section" style="border-top: none; margin-top: 0; padding-top: 0;">Rendering</div>
+      <div class="param-group">
+        <label>Point Size <span id="pointSize-val">4</span></label>
+        <input type="range" id="pointSize" min="1" max="20" step="1" value="4" />
+      </div>
+      <div class="param-group">
+        <label>Color Mode</label>
+        <select id="colorMode">
+          <option value="rgb" selected>RGB</option>
+          <option value="height">Height</option>
+          <option value="intensity">Intensity</option>
+          <option value="white">White</option>
+        </select>
+      </div>
+      <div class="param-group">
+        <label>SSE Threshold <span id="sseThreshold-val">2</span></label>
+        <input type="range" id="sseThreshold" min="1" max="20" step="1" value="2" />
+      </div>
+      <div class="param-group">
+        <label>
+          <span>Depth Test</span>
+          <input type="checkbox" id="depthTest" checked />
+        </label>
+      </div>
+      <div class="param-section">Eye-Dome Lighting</div>
+      <div class="param-group">
+        <label>
+          <span>Enable EDL</span>
+          <input type="checkbox" id="enableEDL" checked />
+        </label>
+      </div>
+      <div class="param-group">
+        <label>Strength <span id="edlStrength-val">5</span></label>
+        <input type="range" id="edlStrength" min="0" max="10" step="0.1" value="5" />
+      </div>
+      <div class="param-group">
+        <label>Radius <span id="edlRadius-val">1.5</span></label>
+        <input type="range" id="edlRadius" min="0" max="5" step="0.1" value="1.5" />
+      </div>
+      <div class="param-group">
+        <label>Opacity <span id="edlOpacity-val">1</span></label>
+        <input type="range" id="edlOpacity" min="0" max="1" step="0.05" value="1" />
+      </div>
+    </div>
   </div>
   <script type="module" src="/dev/main.ts"></script>
 </body>

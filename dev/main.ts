@@ -1,6 +1,6 @@
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { CopcLayer } from '../src/index';
+import { CopcLayer, type ColorMode } from '../src/index';
 
 const map = new maplibregl.Map({
 	container: 'map',
@@ -31,6 +31,22 @@ let copcLayer: CopcLayer | null = null;
 const urlInput = document.getElementById('url-input') as HTMLInputElement;
 const loadBtn = document.getElementById('load-btn') as HTMLButtonElement;
 const statsEl = document.getElementById('stats') as HTMLDivElement;
+const paramsEl = document.getElementById('params') as HTMLDivElement;
+
+// Parameter controls
+const pointSizeInput = document.getElementById('pointSize') as HTMLInputElement;
+const pointSizeVal = document.getElementById('pointSize-val') as HTMLSpanElement;
+const colorModeSelect = document.getElementById('colorMode') as HTMLSelectElement;
+const sseThresholdInput = document.getElementById('sseThreshold') as HTMLInputElement;
+const sseThresholdVal = document.getElementById('sseThreshold-val') as HTMLSpanElement;
+const depthTestInput = document.getElementById('depthTest') as HTMLInputElement;
+const enableEDLInput = document.getElementById('enableEDL') as HTMLInputElement;
+const edlStrengthInput = document.getElementById('edlStrength') as HTMLInputElement;
+const edlStrengthVal = document.getElementById('edlStrength-val') as HTMLSpanElement;
+const edlRadiusInput = document.getElementById('edlRadius') as HTMLInputElement;
+const edlRadiusVal = document.getElementById('edlRadius-val') as HTMLSpanElement;
+const edlOpacityInput = document.getElementById('edlOpacity') as HTMLInputElement;
+const edlOpacityVal = document.getElementById('edlOpacity-val') as HTMLSpanElement;
 
 // Restore COPC URL from query params
 const params = new URLSearchParams(window.location.search);
@@ -50,18 +66,31 @@ function loadCopc(copcUrl: string) {
 	url.searchParams.set('copc', copcUrl);
 	window.history.replaceState({}, '', url);
 
+	const pointSize = Number(pointSizeInput.value);
+	const colorMode = colorModeSelect.value as ColorMode;
+	const sseThreshold = Number(sseThresholdInput.value);
+	const depthTest = depthTestInput.checked;
+	const enableEDL = enableEDLInput.checked;
+	const edlStrength = Number(edlStrengthInput.value);
+	const edlRadius = Number(edlRadiusInput.value);
+	const edlOpacity = Number(edlOpacityInput.value);
+
 	copcLayer = new CopcLayer(copcUrl, {
-		pointSize: 4,
-		colorMode: 'rgb',
-		sseThreshold: 2,
-		enableEDL: true,
-		edlStrength: 5,
+		pointSize,
+		colorMode,
+		sseThreshold,
+		depthTest,
+		enableEDL,
+		edlStrength,
+		edlRadius,
+		edlOpacity,
 		onInitialized: (message) => {
 			map.flyTo({ center: message.center, zoom: 16 });
 		},
 	});
 
 	map.addLayer(copcLayer);
+	paramsEl.classList.add('visible');
 }
 
 loadBtn.addEventListener('click', () => {
@@ -74,6 +103,50 @@ urlInput.addEventListener('keydown', (e) => {
 		const value = urlInput.value.trim();
 		if (value) loadCopc(value);
 	}
+});
+
+// Parameter event handlers
+pointSizeInput.addEventListener('input', () => {
+	const v = Number(pointSizeInput.value);
+	pointSizeVal.textContent = String(v);
+	copcLayer?.setPointSize(v);
+});
+
+colorModeSelect.addEventListener('change', () => {
+	const value = urlInput.value.trim();
+	if (value) loadCopc(value);
+});
+
+sseThresholdInput.addEventListener('input', () => {
+	const v = Number(sseThresholdInput.value);
+	sseThresholdVal.textContent = String(v);
+	copcLayer?.setSseThreshold(v);
+});
+
+depthTestInput.addEventListener('change', () => {
+	copcLayer?.toggleDepthTest(depthTestInput.checked);
+});
+
+enableEDLInput.addEventListener('change', () => {
+	copcLayer?.setEDLEnabled(enableEDLInput.checked);
+});
+
+edlStrengthInput.addEventListener('input', () => {
+	const v = Number(edlStrengthInput.value);
+	edlStrengthVal.textContent = String(v);
+	copcLayer?.updateEDLParameters({ strength: v });
+});
+
+edlRadiusInput.addEventListener('input', () => {
+	const v = Number(edlRadiusInput.value);
+	edlRadiusVal.textContent = String(v);
+	copcLayer?.updateEDLParameters({ radius: v });
+});
+
+edlOpacityInput.addEventListener('input', () => {
+	const v = Number(edlOpacityInput.value);
+	edlOpacityVal.textContent = String(v);
+	copcLayer?.updateEDLParameters({ opacity: v });
 });
 
 map.on('load', () => {
