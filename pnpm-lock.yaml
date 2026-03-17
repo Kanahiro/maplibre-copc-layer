@@ -19,6 +19,9 @@ importers:
         specifier: ^2.15.0
         version: 2.20.4
     devDependencies:
+      '@cloudflare/kv-asset-handler':
+        specifier: ^0.4.2
+        version: 0.4.2
       '@types/node':
         specifier: ^25.5.0
         version: 25.5.0
@@ -51,6 +54,10 @@ importers:
         version: '@voidzero-dev/vite-plus-test@0.1.12(@types/node@25.5.0)(jiti@2.6.1)(typescript@5.9.3)(vite@8.0.0(@types/node@25.5.0)(jiti@2.6.1)(yaml@2.8.2))(yaml@2.8.2)'
 
 packages:
+
+  '@cloudflare/kv-asset-handler@0.4.2':
+    resolution: {integrity: sha512-SIOD2DxrRRwQ+jgzlXCqoEFiKOFqaPjhnNTGKXSRLvp1HiOvapLaFG2kEr9dYQTYe8rKrd9uvDUzmAITeNyaHQ==}
+    engines: {node: '>=18.0.0'}
 
   '@emnapi/core@1.9.0':
     resolution: {integrity: sha512-0DQ98G9ZQZOxfUcQn1waV2yS8aWdZ6kJMbYCJB3oUBecjWYO1fqJ+a1DRfPF3O5JEkwqwP1A9QEN/9mYm2Yd0w==}
@@ -1107,6 +1114,8 @@ packages:
     hasBin: true
 
 snapshots:
+
+  '@cloudflare/kv-asset-handler@0.4.2': {}
 
   '@emnapi/core@1.9.0':
     dependencies:
