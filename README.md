@@ -19,7 +19,7 @@ Stream [Cloud-Optimized Point Cloud (COPC)](https://copc.io/) data directly into
 
 ## Demo
 
-**[Live Demo](https://maplibre-copc-layer.spatialty-io.workers.dev/)**
+**[Live Demo](https://maplibre-copc-layer.spatialty.workers.dev/?copc=https%3A%2F%2Fgsvrg.ipri.aist.go.jp%2F3ddb-pds%2Fcopc%2F114112.copc.laz#17.95/35.657894/139.746455/-83.4/60)**
 
 ## Install
 
