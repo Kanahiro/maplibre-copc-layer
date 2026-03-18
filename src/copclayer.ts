@@ -363,6 +363,29 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		this.map?.triggerRepaint()
 	}
 
+	/**
+	 * Compute camera altitude in meters above sea level.
+	 * MapLibre's getCameraAltitude() returns NaN in Globe mode because
+	 * the Globe transform's internal _pixelPerMeter is never initialized.
+	 * We replicate the formula using publicly accessible values.
+	 */
+	private computeCameraAltitude(): number {
+		if (!this.map) return 0
+		const EARTH_CIRCUMFERENCE = 2 * Math.PI * 6378137.0
+		const latRad = this.map.getCenter().lat * (Math.PI / 180)
+		const fovRad = this.map.transform.fov * (Math.PI / 180)
+		const zoom = this.map.getZoom()
+		const height = this.map.transform.height
+		const pitchRad = this.map.getPitch() * (Math.PI / 180)
+
+		const worldSize = 512 * Math.pow(2, zoom)
+		const pixelPerMeter =
+			worldSize / (EARTH_CIRCUMFERENCE * Math.cos(latRad))
+		const cameraToCenterDistance = height / (2 * Math.tan(fovRad / 2))
+
+		return (Math.cos(pitchRad) * cameraToCenterDistance) / pixelPerMeter
+	}
+
 	private updatePoints(): void {
 		if (!this.map || !this.workerInitialized) return
 
@@ -371,7 +394,7 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		this._lastUpdatePointsTime = now
 
 		const cameraLngLat = this.map.transform.getCameraLngLat().toArray()
-		const cameraAltitude = this.map.transform.getCameraAltitude()
+		const cameraAltitude = this.computeCameraAltitude()
 
 		this.worker.postMessage({
 			type: 'updatePoints',
