@@ -5,6 +5,7 @@ import pointsVertexShader from './shaders/points.vert.glsl';
 import pointsFragmentShader from './shaders/points.frag.glsl';
 import edlVertexShader from './shaders/edl.vert.glsl';
 import edlFragmentShader from './shaders/edl.frag.glsl';
+import CopcWorker from './worker/index.ts?worker&inline';
 
 const EARTH_CIRCUMFERENCE = 2 * Math.PI * 6378137.0;
 const DEG2RAD = Math.PI / 180;
@@ -102,9 +103,7 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		this.camera = new THREE.Camera();
 		this.scene = new THREE.Scene();
 
-		this.worker = new Worker(new URL('./worker/index.ts', import.meta.url), {
-			type: 'module',
-		});
+		this.worker = new CopcWorker();
 		this.setupWorkerMessageHandlers();
 	}
 

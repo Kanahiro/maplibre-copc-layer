@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vite-plus/test'
+import { describe, expect, test } from 'vitest'
 import { computeScreenSpaceError, type Vec3 } from '../src/worker/sse'
 
 describe('computeScreenSpaceError', () => {

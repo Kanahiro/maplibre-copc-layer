@@ -1,6 +1,7 @@
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { CopcLayer, GlobeControl, type ColorMode } from '../src/index';
+import { CopcLayer, type ColorMode } from '../src/index';
+import { GlobeControl } from './globe-control';
 
 const map = new maplibregl.Map({
 	container: 'map',
