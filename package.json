@@ -1,7 +1,7 @@
 {
 	"name": "maplibre-copc-layer",
 	"type": "module",
-	"version": "0.0.6",
+	"version": "0.0.7",
 	"description": "A library for loading and rendering Cloud-Optimized Point Cloud (COPC) data in MapLibre GL JS using Three.js.",
 	"license": "Apache-2.0",
 	"exports": {
