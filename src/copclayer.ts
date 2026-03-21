@@ -11,11 +11,12 @@ import lazPerfWasmUrl from '../vendor/laz-perf/js/src/laz-perf.wasm?url';
 const EARTH_CIRCUMFERENCE = 2 * Math.PI * 6378137.0;
 const DEG2RAD = Math.PI / 180;
 
-export type ColorMode = 'rgb' | 'height' | 'intensity' | 'white';
+export type ColorMode = 'rgb' | 'height' | 'intensity' | 'classification' | 'white';
 
 export interface CopcLayerOptions {
 	pointSize?: number;
 	colorMode?: ColorMode;
+	classificationColors?: Record<number, [number, number, number]>;
 	maxCacheSize?: number;
 	sseThreshold?: number;
 	depthTest?: boolean;
@@ -35,6 +36,7 @@ type ResolvedOptions = Required<CopcLayerOptions>;
 const DEFAULT_OPTIONS: ResolvedOptions = {
 	pointSize: 6,
 	colorMode: 'rgb',
+	classificationColors: {},
 	maxCacheSize: 100,
 	sseThreshold: 8,
 	depthTest: true,
@@ -311,6 +313,7 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 			url: this.url,
 			options: {
 				colorMode: this.options.colorMode,
+				classificationColors: this.options.classificationColors,
 				maxCacheSize: this.options.maxCacheSize,
 				wasmPath: lazPerfWasmUrl,
 			},

@@ -6,7 +6,8 @@ interface InitMessage {
 	type: 'init'
 	url: string
 	options?: {
-		colorMode?: 'rgb' | 'height' | 'intensity' | 'white'
+		colorMode?: 'rgb' | 'height' | 'intensity' | 'classification' | 'white'
+		classificationColors?: Record<number, [number, number, number]>
 		maxCacheSize?: number
 		wasmPath?: string
 	}
@@ -43,8 +44,27 @@ let proj: Converter
 let nodes: Hierarchy.Node.Map = {}
 let nodeCenters: Record<string, Vec3> = {}
 let url: string
-let colorMode: 'rgb' | 'height' | 'intensity' | 'white' = 'rgb'
+let colorMode: 'rgb' | 'height' | 'intensity' | 'classification' | 'white' = 'rgb'
 const cancelledRequests = new Set<string>()
+
+const DEFAULT_CLASSIFICATION_COLORS: Record<number, [number, number, number]> = {
+	0: [0.5, 0.5, 0.5],     // Never Classified
+	1: [0.7, 0.7, 0.7],     // Unclassified
+	2: [0.6, 0.4, 0.2],     // Ground
+	3: [0.5, 0.8, 0.5],     // Low Vegetation
+	4: [0.2, 0.7, 0.2],     // Medium Vegetation
+	5: [0.0, 0.4, 0.0],     // High Vegetation
+	6: [1.0, 0.2, 0.2],     // Building
+	7: [0.3, 0.3, 0.3],     // Low Point (noise)
+	8: [0.6, 0.3, 0.8],     // Model Key-point
+	9: [0.2, 0.4, 1.0],     // Water
+	10: [1.0, 0.6, 0.0],    // Rail
+	11: [0.9, 0.9, 0.3],    // Road Surface
+	12: [0.0, 0.8, 0.8],    // Overlap
+	17: [0.9, 0.5, 0.4],    // Bridge Deck
+	18: [0.5, 0.0, 0.0],    // High Noise
+}
+let classificationColors: Record<number, [number, number, number]> = { ...DEFAULT_CLASSIFICATION_COLORS }
 
 function calcCubeCenter(
 	cube: [number, number, number, number, number, number],
@@ -148,6 +168,7 @@ async function loadNode(node: string) {
 			view.dimensions['Green'] &&
 			view.dimensions['Blue']
 		const hasIntensity = view.dimensions['Intensity']
+		const hasClassification = view.dimensions['Classification']
 
 		const getX = view.getter('X')
 		const getY = view.getter('Y')
@@ -156,6 +177,7 @@ async function loadNode(node: string) {
 		const getGreen = hasRgb ? view.getter('Green') : null
 		const getBlue = hasRgb ? view.getter('Blue') : null
 		const getIntensity = hasIntensity ? view.getter('Intensity') : null
+		const getClassification = hasClassification ? view.getter('Classification') : null
 
 		const cubeMinZ = copc.info.cube[2]
 		const cubeRangeZ = copc.info.cube[5] - cubeMinZ
@@ -217,6 +239,23 @@ async function loadNode(node: string) {
 						colors[i * 3] = colors[i * 3 + 1] = colors[i * 3 + 2] = 1
 					}
 					break
+
+				case 'classification': {
+					if (getClassification) {
+						const cls = getClassification(i)
+						const c = classificationColors[cls]
+						if (c) {
+							colors[i * 3] = c[0]
+							colors[i * 3 + 1] = c[1]
+							colors[i * 3 + 2] = c[2]
+						} else {
+							colors[i * 3] = colors[i * 3 + 1] = colors[i * 3 + 2] = 1
+						}
+					} else {
+						colors[i * 3] = colors[i * 3 + 1] = colors[i * 3 + 2] = 1
+					}
+					break
+				}
 
 				case 'white':
 				default:
@@ -315,6 +354,9 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
 				url = message.url
 				if (message.options) {
 					colorMode = message.options.colorMode || 'rgb'
+					if (message.options.classificationColors) {
+						classificationColors = { ...DEFAULT_CLASSIFICATION_COLORS, ...message.options.classificationColors }
+					}
 				}
 				if (message.options?.wasmPath) {
 					const wasmPath = message.options.wasmPath

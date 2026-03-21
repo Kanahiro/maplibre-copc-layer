@@ -106,6 +106,33 @@
       border-top: 1px solid #f0f0f0;
     }
     .param-section:first-child { border-top: none; margin-top: 0; padding-top: 0; }
+    #classification-legend {
+      display: none;
+      max-height: 200px;
+      overflow-y: auto;
+      margin-top: 4px;
+      border: 1px solid #eee;
+      border-radius: 4px;
+      padding: 4px;
+    }
+    #classification-legend.visible { display: block; }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 4px;
+      font-size: 11px;
+      color: #555;
+    }
+    .legend-item input[type="color"] {
+      width: 24px;
+      height: 18px;
+      padding: 0;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
   </style>
 </head>
 <body>
@@ -128,8 +155,10 @@
           <option value="rgb" selected>RGB</option>
           <option value="height">Height</option>
           <option value="intensity">Intensity</option>
+          <option value="classification">Classification</option>
           <option value="white">White</option>
         </select>
+        <div id="classification-legend"></div>
       </div>
       <div class="param-group">
         <label>SSE Threshold <span id="sseThreshold-val">2</span></label>

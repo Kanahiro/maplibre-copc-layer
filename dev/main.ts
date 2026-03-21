@@ -3,6 +3,58 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { CopcLayer, type ColorMode } from '../src/index';
 import { GlobeControl } from './globe-control';
 
+const CLASSIFICATION_LABELS: Record<number, string> = {
+	0: 'Never Classified',
+	1: 'Unclassified',
+	2: 'Ground',
+	3: 'Low Vegetation',
+	4: 'Medium Vegetation',
+	5: 'High Vegetation',
+	6: 'Building',
+	7: 'Low Point (noise)',
+	8: 'Model Key-point',
+	9: 'Water',
+	10: 'Rail',
+	11: 'Road Surface',
+	12: 'Overlap',
+	17: 'Bridge Deck',
+	18: 'High Noise',
+};
+
+const DEFAULT_CLASSIFICATION_COLORS: Record<number, [number, number, number]> = {
+	0: [0.5, 0.5, 0.5],
+	1: [0.7, 0.7, 0.7],
+	2: [0.6, 0.4, 0.2],
+	3: [0.5, 0.8, 0.5],
+	4: [0.2, 0.7, 0.2],
+	5: [0.0, 0.4, 0.0],
+	6: [1.0, 0.2, 0.2],
+	7: [0.3, 0.3, 0.3],
+	8: [0.6, 0.3, 0.8],
+	9: [0.2, 0.4, 1.0],
+	10: [1.0, 0.6, 0.0],
+	11: [0.9, 0.9, 0.3],
+	12: [0.0, 0.8, 0.8],
+	17: [0.9, 0.5, 0.4],
+	18: [0.5, 0.0, 0.0],
+};
+
+const classificationColors: Record<number, [number, number, number]> = {
+	...DEFAULT_CLASSIFICATION_COLORS,
+};
+
+function rgbToHex(r: number, g: number, b: number): string {
+	const toHex = (v: number) => Math.round(v * 255).toString(16).padStart(2, '0');
+	return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+	const r = parseInt(hex.slice(1, 3), 16) / 255;
+	const g = parseInt(hex.slice(3, 5), 16) / 255;
+	const b = parseInt(hex.slice(5, 7), 16) / 255;
+	return [r, g, b];
+}
+
 const map = new maplibregl.Map({
 	container: 'map',
 	style: {
@@ -36,6 +88,7 @@ const paramsToggle = document.getElementById(
 	'params-toggle',
 ) as HTMLButtonElement;
 const paramsEl = document.getElementById('params') as HTMLDivElement;
+const legendEl = document.getElementById('classification-legend') as HTMLDivElement;
 
 // Parameter controls
 const pointSizeInput = document.getElementById('pointSize') as HTMLInputElement;
@@ -92,6 +145,7 @@ function loadCopc(copcUrl: string) {
 	copcLayer = new CopcLayer(copcUrl, {
 		pointSize,
 		colorMode,
+		classificationColors,
 		sseThreshold,
 		depthTest,
 		enableEDL,
@@ -134,7 +188,39 @@ pointSizeInput.addEventListener('input', () => {
 	copcLayer?.setPointSize(v);
 });
 
+function buildClassificationLegend() {
+	legendEl.innerHTML = '';
+	const codes = Object.keys(classificationColors).map(Number).sort((a, b) => a - b);
+	for (const code of codes) {
+		const [r, g, b] = classificationColors[code];
+		const item = document.createElement('div');
+		item.className = 'legend-item';
+
+		const picker = document.createElement('input');
+		picker.type = 'color';
+		picker.value = rgbToHex(r, g, b);
+		picker.addEventListener('input', () => {
+			classificationColors[code] = hexToRgb(picker.value);
+			const copcUrl = urlInput.value.trim();
+			if (copcUrl) loadCopc(copcUrl);
+		});
+
+		const label = document.createElement('span');
+		label.textContent = `${code}: ${CLASSIFICATION_LABELS[code] ?? 'Unknown'}`;
+
+		item.appendChild(picker);
+		item.appendChild(label);
+		legendEl.appendChild(item);
+	}
+}
+
+function updateLegendVisibility() {
+	const isClassification = colorModeSelect.value === 'classification';
+	legendEl.classList.toggle('visible', isClassification);
+}
+
 colorModeSelect.addEventListener('change', () => {
+	updateLegendVisibility();
 	const value = urlInput.value.trim();
 	if (value) loadCopc(value);
 });
@@ -165,6 +251,7 @@ edlRadiusInput.addEventListener('input', () => {
 	copcLayer?.updateEDLParameters({ radius: v });
 });
 
+buildClassificationLegend();
 map.addControl(new GlobeControl());
 
 map.on('load', () => {
