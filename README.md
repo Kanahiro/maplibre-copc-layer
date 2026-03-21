@@ -15,7 +15,7 @@ Only the tiles visible on screen are fetched via SSE-based LOD, enabling smooth 
 - **Web Worker** — COPC decoding and coordinate reprojection run off the main thread
 - **LRU cache** — Configurable node count and memory limits
 - **Eye-Dome Lighting** — EDL post-processing for depth perception
-- **Color modes** — RGB, height ramp, intensity, and white
+- **Color modes** — RGB, height ramp, intensity, classification, and white
 
 ## Install
 
@@ -53,7 +53,8 @@ map.on('load', () => map.addLayer(layer));
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `pointSize` | `number` | `6` | Point size in pixels |
-| `colorMode` | `'rgb' \| 'height' \| 'intensity' \| 'white'` | `'rgb'` | Coloring mode |
+| `colorMode` | `'rgb' \| 'height' \| 'intensity' \| 'classification' \| 'white'` | `'rgb'` | Coloring mode |
+| `classificationColors` | `Record<number, [number, number, number]>` | `{}` | Override or add classification code colors (0–1 RGB). Merged with ASPRS defaults |
 | `sseThreshold` | `number` | `8` | SSE threshold for LOD — lower loads more detail |
 | `depthTest` | `boolean` | `true` | Enable depth testing |
 | `maxCacheSize` | `number` | `100` | Max cached nodes |
