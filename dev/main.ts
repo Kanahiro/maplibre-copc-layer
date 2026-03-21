@@ -97,6 +97,7 @@ function loadCopc(copcUrl: string) {
 		enableEDL,
 		edlStrength,
 		edlRadius,
+		debug: true,
 		onInitialized: (message) => {
 			map.flyTo({ center: message.center, zoom: 16 });
 		},

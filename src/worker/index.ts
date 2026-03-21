@@ -77,7 +77,11 @@ async function initCopc(initUrl: string) {
 			return
 		}
 
-		proj = proj4(copc.wkt)
+		if (copc.wkt.trimStart().startsWith('GEOCCS')) {
+			proj = proj4('+proj=geocent +datum=WGS84 +units=m +no_defs')
+		} else {
+			proj = proj4(copc.wkt)
+		}
 
 		const { nodes: loadedNodes } = await Copc.loadHierarchyPage(
 			initUrl,
@@ -91,7 +95,7 @@ async function initCopc(initUrl: string) {
 		}
 
 		const rootCenter = nodeCenters['0-0-0-0']
-		const rootCenterLngLat = proj.inverse([rootCenter[0], rootCenter[1]])
+		const rootCenterLngLat = proj.inverse([rootCenter[0], rootCenter[1], rootCenter[2]])
 
 		self.postMessage({
 			type: 'initialized',
@@ -161,7 +165,7 @@ async function loadNode(node: string) {
 			const py = getY(i)
 			const pz = getZ(i)
 
-			const [lon, lat] = proj.inverse([px, py])
+			const [lon, lat, height] = proj.inverse([px, py, pz]) as [number, number, number]
 			const lonRad = lon * PI_180
 			const latRad = lat * PI_180
 
@@ -169,7 +173,7 @@ async function loadNode(node: string) {
 			const sinLat = Math.sin(latRad)
 			const k = (1 + sinLat) / (1 - sinLat)
 			const mercY = 0.5 - Math.log(k) / (4 * Math.PI)
-			const mercZ = pz / EARTH_CIRCUMFERENCE
+			const mercZ = height / EARTH_CIRCUMFERENCE
 
 			positions[i * 3] = mercX
 			positions[i * 3 + 1] = mercY
@@ -251,10 +255,9 @@ function updatePoints(
 	}
 
 	try {
-		const cameraWorld: Vec3 = [
-			...proj.forward([cameraPosition[0], cameraPosition[1]]),
-			cameraPosition[2],
-		] as Vec3
+		const cameraWorld = proj.forward([
+			cameraPosition[0], cameraPosition[1], cameraPosition[2],
+		]) as Vec3
 
 		// Cap effective distance so the root node's SSE never drops below
 		// the threshold, preventing points from disappearing at extreme
