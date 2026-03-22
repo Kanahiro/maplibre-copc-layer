@@ -86,10 +86,10 @@ map.on('load', () => map.addLayer(layer));
 | `setSseThreshold(threshold)` | Update SSE threshold |
 | `setDepthTest(enabled)` | Toggle depth testing |
 | `setEDLEnabled(enabled)` | Toggle Eye-Dome Lighting |
-| `updateEDLParameters({ strength?, radius? })` | Update EDL parameters |
+| `setEDLParameters({ strength?, radius? })` | Update EDL parameters |
 | `setFilter(filter)` | Update point filter (classification / intensity / bbox) |
 | `getFilter()` | Get current point filter |
-| `updateCacheConfig(config)` | Update cache limits at runtime |
+| `setCacheConfig(config)` | Update cache limits at runtime |
 | `clearCache()` | Clear all cached nodes |
 | `isLoading()` | Whether data is currently being fetched |
 | `getNodeStats()` | Returns `{ loaded, visible }` node counts |

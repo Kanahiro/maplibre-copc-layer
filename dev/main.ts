@@ -343,13 +343,13 @@ edl
 	.add(state, 'edlStrength', 0, 10, 0.1)
 	.name('Strength')
 	.onChange((v: number) => {
-		copcLayer?.updateEDLParameters({ strength: v });
+		copcLayer?.setEDLParameters({ strength: v });
 	});
 edl
 	.add(state, 'edlRadius', 0, 5, 0.1)
 	.name('Radius')
 	.onChange((v: number) => {
-		copcLayer?.updateEDLParameters({ radius: v });
+		copcLayer?.setEDLParameters({ radius: v });
 	});
 
 const classificationFolder = gui.addFolder('Classification Colors');
