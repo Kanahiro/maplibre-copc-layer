@@ -132,22 +132,28 @@ describe('CacheManager.createNodeData', () => {
 	test('creates node data with correct fields', () => {
 		const positions = new Float64Array([1, 2, 3, 4, 5, 6])
 		const colors = new Float32Array([1, 0, 0, 0, 1, 0])
+		const classifications = new Uint8Array([2, 6])
+		const intensities = new Float32Array([0.5, 0.8])
 		const config = { colorMode: 'rgb', pointSize: 6, depthTest: true }
 
-		const data = CacheManager.createNodeData('0-0-0-0', positions, colors, config)
+		const data = CacheManager.createNodeData('0-0-0-0', positions, colors, classifications, intensities, config)
 
 		expect(data.nodeId).toBe('0-0-0-0')
 		expect(data.pointCount).toBe(2)
 		expect(data.sizeBytes).toBeGreaterThan(0)
 		expect(data.materialConfig.colorMode).toBe('rgb')
+		expect(data.classifications).toEqual(new Uint8Array([2, 6]))
+		expect(data.intensities).toEqual(new Float32Array([0.5, 0.8]))
 	})
 
 	test('copies buffers to ensure independence', () => {
 		const positions = new Float64Array([1, 2, 3])
 		const colors = new Float32Array([1, 0, 0])
+		const classifications = new Uint8Array([2])
+		const intensities = new Float32Array([0.5])
 		const config = { colorMode: 'rgb', pointSize: 6, depthTest: true }
 
-		const data = CacheManager.createNodeData('0-0-0-0', positions, colors, config)
+		const data = CacheManager.createNodeData('0-0-0-0', positions, colors, classifications, intensities, config)
 
 		positions[0] = 999
 		expect(data.positions[0]).toBe(1)
@@ -158,18 +164,22 @@ describe('CacheManager.estimateNodeSize', () => {
 	test('estimates size for Float64Array positions', () => {
 		const positions = new Float64Array(300)
 		const colors = new Float32Array(300)
+		const classifications = new Uint8Array(100)
+		const intensities = new Float32Array(100)
 
-		const size = CacheManager.estimateNodeSize(positions, colors)
-		// 300 * 8 (Float64) + 300 * 4 (Float32) + 1024 overhead
-		expect(size).toBe(300 * 8 + 300 * 4 + 1024)
+		const size = CacheManager.estimateNodeSize(positions, colors, classifications, intensities)
+		// 300 * 8 (Float64) + 300 * 4 (Float32) + 100 * 1 (Uint8) + 100 * 4 (Float32) + 1024 overhead
+		expect(size).toBe(300 * 8 + 300 * 4 + 100 + 100 * 4 + 1024)
 	})
 
 	test('estimates size for Float32Array positions', () => {
 		const positions = new Float32Array(300)
 		const colors = new Float32Array(300)
+		const classifications = new Uint8Array(100)
+		const intensities = new Float32Array(100)
 
-		const size = CacheManager.estimateNodeSize(positions, colors)
-		// 300 * 4 + 300 * 4 + 1024 overhead
-		expect(size).toBe(300 * 4 + 300 * 4 + 1024)
+		const size = CacheManager.estimateNodeSize(positions, colors, classifications, intensities)
+		// 300 * 4 + 300 * 4 + 100 * 1 + 100 * 4 + 1024 overhead
+		expect(size).toBe(300 * 4 + 300 * 4 + 100 + 100 * 4 + 1024)
 	})
 })

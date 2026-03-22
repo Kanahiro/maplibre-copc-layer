@@ -3,6 +3,7 @@ export {
 	type CopcLayerOptions,
 	type ColorMode,
 	type NodeStats,
+	type PointFilter,
 } from './copclayer';
 export {
 	CacheManager,

@@ -149,6 +149,8 @@ async function loadNode(node: string) {
 
 		const positions = new Float64Array(targetNode.pointCount * 3);
 		const colors = new Float32Array(targetNode.pointCount * 3);
+		const classifications = new Uint8Array(targetNode.pointCount);
+		const intensities = new Float32Array(targetNode.pointCount);
 
 		const hasRgb =
 			view.dimensions['Red'] &&
@@ -193,6 +195,9 @@ async function loadNode(node: string) {
 			positions[i * 3] = mercX;
 			positions[i * 3 + 1] = mercY;
 			positions[i * 3 + 2] = mercZ;
+
+			classifications[i] = getClassification ? getClassification(i) : 0;
+			intensities[i] = getIntensity ? getIntensity(i) / 65535 : 0;
 
 			switch (colorMode) {
 				case 'rgb':
@@ -263,9 +268,18 @@ async function loadNode(node: string) {
 				node,
 				positions: positions.buffer,
 				colors: colors.buffer,
+				classifications: classifications.buffer,
+				intensities: intensities.buffer,
 				pointCount: targetNode.pointCount,
 			},
-			{ transfer: [positions.buffer, colors.buffer] },
+			{
+				transfer: [
+					positions.buffer,
+					colors.buffer,
+					classifications.buffer,
+					intensities.buffer,
+				],
+			},
 		);
 	} catch (error) {
 		self.postMessage({

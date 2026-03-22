@@ -4,7 +4,13 @@ uniform vec3 pointColor;
     varying vec3 vColor;
 #endif
 
+varying float vFiltered;
+
 void main() {
+    if (vFiltered > 0.5) {
+        discard;
+    }
+
     vec2 cxy = 2.0 * gl_PointCoord - 1.0;
     float r = dot(cxy, cxy);
     if (r > 1.0) {

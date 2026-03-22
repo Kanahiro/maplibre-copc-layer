@@ -13,10 +13,16 @@ const DEG2RAD = Math.PI / 180;
 
 export type ColorMode = 'rgb' | 'height' | 'intensity' | 'classification' | 'white';
 
+export interface PointFilter {
+	classification?: Set<number>;
+	intensityRange?: [number, number];
+}
+
 export interface CopcLayerOptions {
 	pointSize?: number;
 	colorMode?: ColorMode;
 	classificationColors?: Record<number, [number, number, number]>;
+	filter?: PointFilter;
 	maxCacheSize?: number;
 	sseThreshold?: number;
 	depthTest?: boolean;
@@ -37,6 +43,7 @@ const DEFAULT_OPTIONS: ResolvedOptions = {
 	pointSize: 6,
 	colorMode: 'rgb',
 	classificationColors: { ...DEFAULT_CLASSIFICATION_COLORS },
+	filter: {},
 	maxCacheSize: 100,
 	sseThreshold: 8,
 	depthTest: true,
@@ -83,6 +90,7 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 	private _lastEdlWidth = 0;
 	private _lastEdlHeight = 0;
 	private _lastUpdatePointsTime = 0;
+	private classificationFilterTexture: THREE.DataTexture;
 
 	constructor(
 		url: string,
@@ -101,6 +109,8 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 
 		this.camera = new THREE.Camera();
 		this.scene = new THREE.Scene();
+
+		this.classificationFilterTexture = this.createClassificationFilterTexture();
 
 		this.worker = new CopcWorker();
 		this.setupWorkerMessageHandlers();
@@ -121,6 +131,8 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 						message.node,
 						message.positions,
 						message.colors,
+						message.classifications,
+						message.intensities,
 					);
 					break;
 				case 'nodesToLoad':
@@ -150,18 +162,29 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		nodeId: string,
 		positionsBuffer: ArrayBuffer,
 		colorsBuffer: ArrayBuffer,
+		classificationsBuffer: ArrayBuffer,
+		intensitiesBuffer: ArrayBuffer,
 	): void {
 		this.pendingRequests.delete(nodeId);
 		this.removeFromRequestQueue(nodeId);
 
 		const positions = new Float64Array(positionsBuffer);
 		const colors = new Float32Array(colorsBuffer);
+		const classifications = new Uint8Array(classificationsBuffer);
+		const intensities = new Float32Array(intensitiesBuffer);
 
-		const nodeData = CacheManager.createNodeData(nodeId, positions, colors, {
-			colorMode: this.options.colorMode,
-			pointSize: this.options.pointSize,
-			depthTest: this.options.depthTest,
-		});
+		const nodeData = CacheManager.createNodeData(
+			nodeId,
+			positions,
+			colors,
+			classifications,
+			intensities,
+			{
+				colorMode: this.options.colorMode,
+				pointSize: this.options.pointSize,
+				depthTest: this.options.depthTest,
+			},
+		);
 
 		const geometry = new THREE.BufferGeometry();
 
@@ -185,6 +208,19 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		}
 
 		geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+		const classificationAttr = new Float32Array(classifications.length);
+		for (let i = 0; i < classifications.length; i++) {
+			classificationAttr[i] = classifications[i];
+		}
+		geometry.setAttribute(
+			'classification',
+			new THREE.BufferAttribute(classificationAttr, 1),
+		);
+		geometry.setAttribute(
+			'intensity',
+			new THREE.BufferAttribute(intensities, 1),
+		);
 
 		const material = this.createPointMaterial();
 		const points = new THREE.Points(geometry, material);
@@ -513,6 +549,7 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 	onRemove(_map: maplibregl.Map, _gl: WebGLRenderingContext): void {
 		this.worker.terminate();
 		this.cacheManager.clear();
+		this.classificationFilterTexture.dispose();
 		this.visibleNodes.length = 0;
 		this.pendingRequests.clear();
 		this.requestQueue.length = 0;
@@ -589,37 +626,35 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		this.edlMaterial.uniforms.screenSize.value.set(width, height);
 	}
 
-	private createPointMaterial(): THREE.ShaderMaterial | THREE.PointsMaterial {
-		if (this.options.enableEDL) {
-			return new THREE.ShaderMaterial({
-				uniforms: {
-					size: { value: this.options.pointSize },
-					scale: { value: window.devicePixelRatio },
-					useVertexColors: { value: this.options.colorMode !== 'white' },
-					pointColor: { value: new THREE.Color(0xffffff) },
+	private createPointMaterial(): THREE.ShaderMaterial {
+		const filter = this.options.filter;
+		return new THREE.ShaderMaterial({
+			uniforms: {
+				size: { value: this.options.pointSize },
+				scale: { value: window.devicePixelRatio },
+				useVertexColors: { value: this.options.colorMode !== 'white' },
+				pointColor: { value: new THREE.Color(0xffffff) },
+				classificationFilter: { value: this.classificationFilterTexture },
+				intensityRange: {
+					value: new THREE.Vector2(
+						filter.intensityRange?.[0] ?? 0,
+						filter.intensityRange?.[1] ?? 1,
+					),
 				},
-				vertexShader: pointsVertexShader,
-				fragmentShader: pointsFragmentShader,
-				vertexColors: this.options.colorMode !== 'white',
-				depthTest: this.options.depthTest,
-				depthWrite: this.options.depthTest,
-				transparent: false,
-			});
-		}
-
-		const material = new THREE.PointsMaterial({
+				useClassificationFilter: {
+					value: filter.classification !== undefined,
+				},
+				useIntensityFilter: {
+					value: filter.intensityRange !== undefined,
+				},
+			},
+			vertexShader: pointsVertexShader,
+			fragmentShader: pointsFragmentShader,
 			vertexColors: this.options.colorMode !== 'white',
-			size: this.options.pointSize,
 			depthTest: this.options.depthTest,
 			depthWrite: this.options.depthTest,
-			sizeAttenuation: true,
+			transparent: false,
 		});
-
-		if (this.options.colorMode === 'white') {
-			material.color.setHex(0xffffff);
-		}
-
-		return material;
 	}
 
 	// Public getters
@@ -697,5 +732,46 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 			strength: this.options.edlStrength,
 			radius: this.options.edlRadius,
 		};
+	}
+
+	public setFilter(filter: PointFilter): void {
+		this.options.filter = filter;
+		this.updateClassificationFilterTexture();
+		this.rebuildAllMaterials();
+		this.map?.triggerRepaint();
+	}
+
+	public getFilter(): PointFilter {
+		return { ...this.options.filter };
+	}
+
+	private createClassificationFilterTexture(): THREE.DataTexture {
+		const data = new Uint8Array(256);
+		data.fill(255);
+		const texture = new THREE.DataTexture(
+			data,
+			256,
+			1,
+			THREE.RedFormat,
+			THREE.UnsignedByteType,
+		);
+		texture.needsUpdate = true;
+		return texture;
+	}
+
+	private updateClassificationFilterTexture(): void {
+		const data = this.classificationFilterTexture.image
+			.data as Uint8Array;
+		const filter = this.options.filter;
+
+		if (filter.classification) {
+			for (let i = 0; i < 256; i++) {
+				data[i] = filter.classification.has(i) ? 255 : 0;
+			}
+		} else {
+			data.fill(255);
+		}
+
+		this.classificationFilterTexture.needsUpdate = true;
 	}
 }

@@ -1,7 +1,7 @@
 import GUI from 'lil-gui';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { CopcLayer, type ColorMode } from '../src/index';
+import { CopcLayer, type ColorMode, type PointFilter } from '../src/index';
 import { GlobeControl } from './globe-control';
 
 const CLASSIFICATION_LABELS: Record<number, string> = {
@@ -77,6 +77,16 @@ for (const [code, rgb] of Object.entries(DEFAULT_CLASSIFICATION_COLORS)) {
 	classificationHexColors[code] = rgbToHex(...rgb);
 }
 
+const classificationVisibility: Record<string, boolean> = {};
+for (const code of Object.keys(CLASSIFICATION_LABELS)) {
+	classificationVisibility[code] = true;
+}
+
+const filterState = {
+	intensityMin: 0,
+	intensityMax: 1,
+};
+
 // --- Map ---
 
 const map = new maplibregl.Map({
@@ -112,6 +122,30 @@ function getClassificationColorsMap(): Record<
 		result[Number(code)] = hexToRgb(hex);
 	}
 	return result;
+}
+
+function applyFilter() {
+	if (!copcLayer) return;
+	const filter: PointFilter = {};
+
+	const visibleClasses = new Set<number>();
+	let allVisible = true;
+	for (const [code, visible] of Object.entries(classificationVisibility)) {
+		if (visible) {
+			visibleClasses.add(Number(code));
+		} else {
+			allVisible = false;
+		}
+	}
+	if (!allVisible) {
+		filter.classification = visibleClasses;
+	}
+
+	if (filterState.intensityMin > 0 || filterState.intensityMax < 1) {
+		filter.intensityRange = [filterState.intensityMin, filterState.intensityMax];
+	}
+
+	copcLayer.setFilter(filter);
 }
 
 function loadCopc() {
@@ -223,6 +257,28 @@ for (const code of Object.keys(classificationHexColors)) {
 		.onChange(loadCopc);
 }
 classificationFolder.show(state.colorMode === 'classification');
+
+const filterFolder = gui.addFolder('Filters');
+
+const classFilterFolder = filterFolder.addFolder('Classification');
+for (const code of Object.keys(CLASSIFICATION_LABELS)) {
+	const num = Number(code);
+	const label = CLASSIFICATION_LABELS[num] ?? `Class ${code}`;
+	classFilterFolder
+		.add(classificationVisibility, code)
+		.name(`${code}: ${label}`)
+		.onChange(applyFilter);
+}
+
+const intensityFolder = filterFolder.addFolder('Intensity');
+intensityFolder
+	.add(filterState, 'intensityMin', 0, 1, 0.01)
+	.name('Min')
+	.onChange(applyFilter);
+intensityFolder
+	.add(filterState, 'intensityMax', 0, 1, 0.01)
+	.name('Max')
+	.onChange(applyFilter);
 
 // --- Init ---
 
