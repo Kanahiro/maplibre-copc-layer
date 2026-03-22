@@ -495,7 +495,7 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		}
 	}
 
-	public updateCacheConfig(config: Partial<CopcLayerOptions>): void {
+	public setCacheConfig(config: Partial<CopcLayerOptions>): void {
 		Object.assign(this.options, config);
 
 		const protectedNodes = new Set(this.visibleNodes);
@@ -928,7 +928,7 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		this.map?.triggerRepaint();
 	}
 
-	public updateEDLParameters(params: {
+	public setEDLParameters(params: {
 		strength?: number;
 		radius?: number;
 	}): void {
