@@ -142,7 +142,10 @@ function applyFilter() {
 	}
 
 	if (filterState.intensityMin > 0 || filterState.intensityMax < 1) {
-		filter.intensityRange = [filterState.intensityMin, filterState.intensityMax];
+		filter.intensityRange = [
+			filterState.intensityMin,
+			filterState.intensityMax,
+		];
 	}
 
 	copcLayer.setFilter(filter);
@@ -171,6 +174,7 @@ function loadCopc() {
 		edlStrength: state.edlStrength,
 		edlRadius: state.edlRadius,
 		debug: true,
+		alwaysShowRoot: true,
 		onInitialized: (message) => {
 			map.flyTo({ center: message.center, zoom: 16 });
 		},

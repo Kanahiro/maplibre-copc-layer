@@ -6,12 +6,18 @@ import pointsFragmentShader from './shaders/points.frag.glsl';
 import edlVertexShader from './shaders/edl.vert.glsl';
 import edlFragmentShader from './shaders/edl.frag.glsl';
 import CopcWorker from './worker/index.ts?worker&inline';
-import { DEFAULT_CLASSIFICATION_COLORS } from './constants';
+import {
+	DEFAULT_CLASSIFICATION_COLORS,
+	EARTH_CIRCUMFERENCE,
+	DEG2RAD,
+} from './constants';
 
-const EARTH_CIRCUMFERENCE = 2 * Math.PI * 6378137.0;
-const DEG2RAD = Math.PI / 180;
-
-export type ColorMode = 'rgb' | 'height' | 'intensity' | 'classification' | 'white';
+export type ColorMode =
+	| 'rgb'
+	| 'height'
+	| 'intensity'
+	| 'classification'
+	| 'white';
 
 export interface PointFilter {
 	classification?: Set<number>;
@@ -23,6 +29,7 @@ export interface CopcLayerOptions {
 	colorMode?: ColorMode;
 	classificationColors?: Record<number, [number, number, number]>;
 	filter?: PointFilter;
+	alwaysShowRoot?: boolean;
 	maxCacheSize?: number;
 	sseThreshold?: number;
 	depthTest?: boolean;
@@ -44,6 +51,7 @@ const DEFAULT_OPTIONS: ResolvedOptions = {
 	colorMode: 'rgb',
 	classificationColors: { ...DEFAULT_CLASSIFICATION_COLORS },
 	filter: {},
+	alwaysShowRoot: false,
 	maxCacheSize: 100,
 	sseThreshold: 8,
 	depthTest: true,
@@ -350,6 +358,7 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 			options: {
 				colorMode: this.options.colorMode,
 				classificationColors: this.options.classificationColors,
+				alwaysShowRoot: this.options.alwaysShowRoot,
 			},
 		});
 
@@ -760,8 +769,7 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 	}
 
 	private updateClassificationFilterTexture(): void {
-		const data = this.classificationFilterTexture.image
-			.data as Uint8Array;
+		const data = this.classificationFilterTexture.image.data as Uint8Array;
 		const filter = this.options.filter;
 
 		if (filter.classification) {

@@ -2,6 +2,7 @@ import { Copc, type Hierarchy, Las } from 'copc';
 import proj4, { type Converter } from 'proj4';
 import lazPerfWasmUrl from '../../vendor/laz-perf/js/src/laz-perf.wasm?url';
 import { computeScreenSpaceError, type Vec3 } from './sse';
+import { EARTH_CIRCUMFERENCE, DEG2RAD } from '../constants';
 
 interface InitMessage {
 	type: 'init';
@@ -9,6 +10,7 @@ interface InitMessage {
 	options?: {
 		colorMode?: 'rgb' | 'height' | 'intensity' | 'classification' | 'white';
 		classificationColors?: Record<number, [number, number, number]>;
+		alwaysShowRoot?: boolean;
 	};
 }
 
@@ -45,6 +47,7 @@ let nodeCenters: Record<string, Vec3> = {};
 let url: string;
 let colorMode: 'rgb' | 'height' | 'intensity' | 'classification' | 'white' =
 	'rgb';
+let alwaysShowRoot = false;
 const cancelledRequests = new Set<string>();
 
 let classificationColors: Record<number, [number, number, number]> = {};
@@ -117,9 +120,6 @@ async function initCopc(initUrl: string) {
 	}
 }
 
-const EARTH_CIRCUMFERENCE = 2 * Math.PI * 6378137.0;
-const PI_180 = Math.PI / 180.0;
-
 async function loadNode(node: string) {
 	if (!copc) {
 		self.postMessage({ type: 'error', message: 'COPC not initialized' });
@@ -183,8 +183,8 @@ async function loadNode(node: string) {
 				number,
 				number,
 			];
-			const lonRad = lon * PI_180;
-			const latRad = lat * PI_180;
+			const lonRad = lon * DEG2RAD;
+			const latRad = lat * DEG2RAD;
 
 			const mercX = 0.5 + lonRad / (2 * Math.PI);
 			const sinLat = Math.sin(latRad);
@@ -307,17 +307,6 @@ function updatePoints(
 			cameraPosition[2],
 		]) as Vec3;
 
-		// Cap effective distance so the root node's SSE never drops below
-		// the threshold, preventing points from disappearing at extreme
-		// camera altitudes (e.g. Globe View at low zoom levels).
-		// Derived from: SSE = (geometricError * screenHeight) / (2 * dist * tan(fov/2))
-		// Solving for dist when SSE = sseThreshold:
-		const fovRad = fov * (Math.PI / 180);
-		const rootGeometricError = copc.info.spacing;
-		const maxDistance =
-			(rootGeometricError * mapHeight) /
-			(2 * sseThreshold * Math.tan(fovRad / 2));
-
 		const visibleNodes: string[] = [];
 
 		for (const [nodeId, center] of Object.entries(nodeCenters)) {
@@ -329,7 +318,6 @@ function updatePoints(
 				fov,
 				copc.info.spacing * 0.5 ** depth,
 				mapHeight,
-				maxDistance,
 			);
 
 			if (sse > sseThreshold) {
@@ -337,7 +325,7 @@ function updatePoints(
 			}
 		}
 
-		if (visibleNodes.length === 0) {
+		if (alwaysShowRoot && visibleNodes.length === 0) {
 			visibleNodes.push('0-0-0-0');
 		}
 
@@ -363,6 +351,7 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
 				url = message.url;
 				if (message.options) {
 					colorMode = message.options.colorMode || 'rgb';
+					alwaysShowRoot = message.options.alwaysShowRoot ?? false;
 					if (message.options.classificationColors) {
 						classificationColors = message.options.classificationColors;
 					}
