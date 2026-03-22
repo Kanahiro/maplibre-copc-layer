@@ -19,6 +19,12 @@ export type ColorMode =
 	| 'classification'
 	| 'white';
 
+export type RGBColor = [number, number, number];
+
+export type ColorExpression =
+	| ['linear', ...(number | RGBColor)[]]
+	| ['discrete', ...(number | RGBColor)[]];
+
 export interface BboxFilter {
 	minx?: number;
 	maxx?: number;
@@ -37,7 +43,9 @@ export interface PointFilter {
 export interface CopcLayerOptions {
 	pointSize?: number;
 	colorMode?: ColorMode;
-	classificationColors?: Record<number, [number, number, number]>;
+	heightColor?: ColorExpression;
+	intensityColor?: ColorExpression;
+	classificationColors?: Record<number, RGBColor>;
 	filter?: PointFilter;
 	alwaysShowRoot?: boolean;
 	maxCacheSize?: number;
@@ -61,11 +69,16 @@ export interface CopcLayerOptions {
 	}) => void;
 }
 
-type ResolvedOptions = Required<CopcLayerOptions>;
+type ResolvedOptions = Required<
+	Omit<CopcLayerOptions, 'heightColor' | 'intensityColor'>
+> &
+	Pick<CopcLayerOptions, 'heightColor' | 'intensityColor'>;
 
 const DEFAULT_OPTIONS: ResolvedOptions = {
 	pointSize: 6,
 	colorMode: 'rgb',
+	heightColor: undefined,
+	intensityColor: undefined,
 	classificationColors: { ...DEFAULT_CLASSIFICATION_COLORS },
 	filter: {},
 	alwaysShowRoot: false,
@@ -374,6 +387,8 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 			url: this.url,
 			options: {
 				colorMode: this.options.colorMode,
+				heightColor: this.options.heightColor,
+				intensityColor: this.options.intensityColor,
 				classificationColors: this.options.classificationColors,
 				alwaysShowRoot: this.options.alwaysShowRoot,
 			},

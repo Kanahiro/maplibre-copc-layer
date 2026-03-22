@@ -4,12 +4,20 @@ import lazPerfWasmUrl from '../../vendor/laz-perf/js/src/laz-perf.wasm?url';
 import { computeScreenSpaceError, type Vec3 } from './sse';
 import { EARTH_CIRCUMFERENCE, DEG2RAD } from '../constants';
 
+type RGBColor = [number, number, number];
+
+type ColorExpression =
+	| ['linear', ...(number | RGBColor)[]]
+	| ['discrete', ...(number | RGBColor)[]];
+
 interface InitMessage {
 	type: 'init';
 	url: string;
 	options?: {
 		colorMode?: 'rgb' | 'height' | 'intensity' | 'classification' | 'white';
-		classificationColors?: Record<number, [number, number, number]>;
+		heightColor?: ColorExpression;
+		intensityColor?: ColorExpression;
+		classificationColors?: Record<number, RGBColor>;
 		alwaysShowRoot?: boolean;
 	};
 }
@@ -50,7 +58,69 @@ let colorMode: 'rgb' | 'height' | 'intensity' | 'classification' | 'white' =
 let alwaysShowRoot = false;
 const cancelledRequests = new Set<string>();
 
-let classificationColors: Record<number, [number, number, number]> = {};
+let classificationColors: Record<number, RGBColor> = {};
+let heightColor: ColorExpression | undefined;
+let intensityColor: ColorExpression = ['linear', 0, [0, 0, 0], 1, [1, 1, 1]];
+
+function applyColorExpression(
+	expr: ColorExpression,
+	height: number,
+	colors: Float32Array,
+	offset: number,
+): void {
+	if (expr[0] === 'linear') {
+		// ["linear", h0, c0, h1, c1, ...]
+		const firstH = expr[1] as number;
+		const firstC = expr[2] as RGBColor;
+		if (height <= firstH) {
+			colors[offset] = firstC[0];
+			colors[offset + 1] = firstC[1];
+			colors[offset + 2] = firstC[2];
+			return;
+		}
+		const lastIdx = expr.length - 2;
+		const lastH = expr[lastIdx] as number;
+		const lastC = expr[lastIdx + 1] as RGBColor;
+		if (height >= lastH) {
+			colors[offset] = lastC[0];
+			colors[offset + 1] = lastC[1];
+			colors[offset + 2] = lastC[2];
+			return;
+		}
+		for (let i = 1; i < expr.length - 2; i += 2) {
+			const h1 = expr[i + 2] as number;
+			if (height <= h1) {
+				const h0 = expr[i] as number;
+				const c0 = expr[i + 1] as RGBColor;
+				const c1 = expr[i + 3] as RGBColor;
+				const t = (height - h0) / (h1 - h0);
+				colors[offset] = c0[0] + t * (c1[0] - c0[0]);
+				colors[offset + 1] = c0[1] + t * (c1[1] - c0[1]);
+				colors[offset + 2] = c0[2] + t * (c1[2] - c0[2]);
+				return;
+			}
+		}
+	} else {
+		// ["discrete", h0, c0, h1, c1, ...]
+		const dc = expr[2] as RGBColor;
+		let r = dc[0],
+			g = dc[1],
+			b = dc[2];
+		for (let i = 1; i < expr.length; i += 2) {
+			if (height >= (expr[i] as number)) {
+				const c = expr[i + 1] as RGBColor;
+				r = c[0];
+				g = c[1];
+				b = c[2];
+			} else {
+				break;
+			}
+		}
+		colors[offset] = r;
+		colors[offset + 1] = g;
+		colors[offset + 2] = b;
+	}
+}
 
 function calcCubeCenter(
 	cube: [number, number, number, number, number, number],
@@ -121,6 +191,17 @@ async function initCopc(initUrl: string) {
 			maxz: Math.max(...wgs84Corners.map((c) => c[2])),
 		};
 
+		if (!heightColor) {
+			heightColor = [
+				'linear',
+				bounds.minz,
+				[0, 0, 1],
+				(bounds.minz + bounds.maxz) / 2,
+				[1, 1, 0],
+				bounds.maxz,
+				[1, 0, 0],
+			];
+		}
 		self.postMessage({
 			type: 'initialized',
 			nodeCount: Object.keys(nodes).length,
@@ -184,9 +265,6 @@ async function loadNode(node: string) {
 			? view.getter('Classification')
 			: null;
 
-		const cubeMinZ = copc.info.cube[2];
-		const cubeRangeZ = copc.info.cube[5] - cubeMinZ;
-
 		for (let i = 0; i < targetNode.pointCount; i++) {
 			const px = getX(i);
 			const py = getY(i);
@@ -225,32 +303,19 @@ async function loadNode(node: string) {
 					break;
 
 				case 'height': {
-					const normalizedHeight = (pz - cubeMinZ) / cubeRangeZ;
-					colors[i * 3] = Math.min(1, Math.max(0, normalizedHeight * 2));
-					colors[i * 3 + 1] = Math.min(
-						1,
-						Math.max(
-							0,
-							normalizedHeight > 0.5
-								? 2 - normalizedHeight * 2
-								: normalizedHeight * 2,
-						),
-					);
-					colors[i * 3 + 2] = Math.min(
-						1,
-						Math.max(0, 1 - normalizedHeight * 2),
-					);
+					applyColorExpression(heightColor!, height, colors, i * 3);
 					break;
 				}
 
-				case 'intensity':
-					if (getIntensity) {
-						const intensity = getIntensity(i) / 65535;
-						colors[i * 3] = colors[i * 3 + 1] = colors[i * 3 + 2] = intensity;
-					} else {
-						colors[i * 3] = colors[i * 3 + 1] = colors[i * 3 + 2] = 1;
-					}
+				case 'intensity': {
+					applyColorExpression(
+						intensityColor,
+						intensities[i],
+						colors,
+						i * 3,
+					);
 					break;
+				}
 
 				case 'classification': {
 					if (getClassification) {
@@ -366,6 +431,12 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
 				if (message.options) {
 					colorMode = message.options.colorMode || 'rgb';
 					alwaysShowRoot = message.options.alwaysShowRoot ?? false;
+					if (message.options.heightColor) {
+						heightColor = message.options.heightColor;
+					}
+					if (message.options.intensityColor) {
+						intensityColor = message.options.intensityColor;
+					}
 					if (message.options.classificationColors) {
 						classificationColors = message.options.classificationColors;
 					}

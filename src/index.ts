@@ -2,6 +2,8 @@ export {
 	CopcLayer,
 	type CopcLayerOptions,
 	type ColorMode,
+	type ColorExpression,
+	type RGBColor,
 	type NodeStats,
 	type PointFilter,
 	type BboxFilter,
