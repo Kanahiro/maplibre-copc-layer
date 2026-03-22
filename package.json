@@ -1,7 +1,7 @@
 {
 	"name": "maplibre-copc-layer",
 	"type": "module",
-	"version": "0.1.6",
+	"version": "0.1.7",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/Kanahiro/maplibre-copc-layer.git"
