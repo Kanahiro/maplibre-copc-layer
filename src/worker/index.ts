@@ -100,17 +100,31 @@ async function initCopc(initUrl: string) {
 			nodeCenters[k] = calcCubeCenter(copc.info.cube, k);
 		}
 
-		const rootCenter = nodeCenters['0-0-0-0'];
-		const rootCenterLngLat = proj.inverse([
-			rootCenter[0],
-			rootCenter[1],
-			rootCenter[2],
-		]);
+		const cube = copc.info.cube;
+		const cubeCorners = [
+			[cube[0], cube[1], cube[2]],
+			[cube[3], cube[1], cube[2]],
+			[cube[0], cube[4], cube[2]],
+			[cube[3], cube[4], cube[2]],
+			[cube[0], cube[1], cube[5]],
+			[cube[3], cube[1], cube[5]],
+			[cube[0], cube[4], cube[5]],
+			[cube[3], cube[4], cube[5]],
+		];
+		const wgs84Corners = cubeCorners.map((c) => proj.inverse(c));
+		const bounds = {
+			minx: Math.min(...wgs84Corners.map((c) => c[0])),
+			maxx: Math.max(...wgs84Corners.map((c) => c[0])),
+			miny: Math.min(...wgs84Corners.map((c) => c[1])),
+			maxy: Math.max(...wgs84Corners.map((c) => c[1])),
+			minz: Math.min(...wgs84Corners.map((c) => c[2])),
+			maxz: Math.max(...wgs84Corners.map((c) => c[2])),
+		};
 
 		self.postMessage({
 			type: 'initialized',
-			center: rootCenterLngLat,
 			nodeCount: Object.keys(nodes).length,
+			bounds,
 		});
 	} catch (error) {
 		self.postMessage({

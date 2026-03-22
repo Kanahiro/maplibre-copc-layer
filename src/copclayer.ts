@@ -19,9 +19,19 @@ export type ColorMode =
 	| 'classification'
 	| 'white';
 
+export interface BboxFilter {
+	minx?: number;
+	maxx?: number;
+	miny?: number;
+	maxy?: number;
+	minz?: number;
+	maxz?: number;
+}
+
 export interface PointFilter {
 	classification?: Set<number>;
 	intensityRange?: [number, number];
+	bbox?: BboxFilter;
 }
 
 export interface CopcLayerOptions {
@@ -40,7 +50,14 @@ export interface CopcLayerOptions {
 	edlRadius?: number;
 	onInitialized?: (message: {
 		nodeCount: number;
-		center: [number, number];
+		bounds: {
+			minx: number;
+			maxx: number;
+			miny: number;
+			maxy: number;
+			minz: number;
+			maxz: number;
+		};
 	}) => void;
 }
 
@@ -635,8 +652,53 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		this.edlMaterial.uniforms.screenSize.value.set(width, height);
 	}
 
+	private lngLatToMercator(
+		lng: number,
+		lat: number,
+		height: number,
+	): [number, number, number] {
+		const latRad = lat * DEG2RAD;
+		const sinLat = Math.sin(latRad);
+		const mercX = 0.5 + lng / 360;
+		const mercY =
+			0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI);
+		const mercZ = height / EARTH_CIRCUMFERENCE;
+		return [mercX, mercY, mercZ];
+	}
+
+	private getBboxMercator(): {
+		min: [number, number, number];
+		max: [number, number, number];
+	} | null {
+		const bbox = this.options.filter.bbox;
+		if (!bbox) return null;
+		const hasAny =
+			bbox.minx !== undefined ||
+			bbox.maxx !== undefined ||
+			bbox.miny !== undefined ||
+			bbox.maxy !== undefined ||
+			bbox.minz !== undefined ||
+			bbox.maxz !== undefined;
+		if (!hasAny) return null;
+
+		const minLng = bbox.minx ?? -180;
+		const maxLng = bbox.maxx ?? 180;
+		const minLat = bbox.miny ?? -85;
+		const maxLat = bbox.maxy ?? 85;
+		const minZ = bbox.minz ?? -1e10;
+		const maxZ = bbox.maxz ?? 1e10;
+
+		const minMerc = this.lngLatToMercator(minLng, maxLat, minZ);
+		const maxMerc = this.lngLatToMercator(maxLng, minLat, maxZ);
+
+		return { min: minMerc, max: maxMerc };
+	}
+
 	private createPointMaterial(): THREE.ShaderMaterial {
 		const filter = this.options.filter;
+		const bboxMerc = this.getBboxMercator();
+		const sc = this.sceneCenter;
+
 		return new THREE.ShaderMaterial({
 			uniforms: {
 				size: { value: this.options.pointSize },
@@ -655,6 +717,21 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 				},
 				useIntensityFilter: {
 					value: filter.intensityRange !== undefined,
+				},
+				useBboxFilter: { value: bboxMerc !== null },
+				bboxMin: {
+					value: new THREE.Vector3(
+						bboxMerc ? bboxMerc.min[0] - (sc?.x ?? 0) : 0,
+						bboxMerc ? bboxMerc.min[1] - (sc?.y ?? 0) : 0,
+						bboxMerc ? bboxMerc.min[2] - (sc?.z ?? 0) : 0,
+					),
+				},
+				bboxMax: {
+					value: new THREE.Vector3(
+						bboxMerc ? bboxMerc.max[0] - (sc?.x ?? 0) : 0,
+						bboxMerc ? bboxMerc.max[1] - (sc?.y ?? 0) : 0,
+						bboxMerc ? bboxMerc.max[2] - (sc?.z ?? 0) : 0,
+					),
 				},
 			},
 			vertexShader: pointsVertexShader,

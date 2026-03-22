@@ -4,6 +4,7 @@ export {
 	type ColorMode,
 	type NodeStats,
 	type PointFilter,
+	type BboxFilter,
 } from './copclayer';
 export {
 	CacheManager,

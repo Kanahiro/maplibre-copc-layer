@@ -9,6 +9,10 @@ uniform vec2 intensityRange;
 uniform bool useClassificationFilter;
 uniform bool useIntensityFilter;
 
+uniform bool useBboxFilter;
+uniform vec3 bboxMin;
+uniform vec3 bboxMax;
+
 #ifdef USE_COLOR
     varying vec3 vColor;
 #endif
@@ -27,6 +31,14 @@ void main() {
 
     if (useIntensityFilter) {
         if (intensity < intensityRange.x || intensity > intensityRange.y) {
+            vFiltered = 1.0;
+        }
+    }
+
+    if (useBboxFilter) {
+        if (position.x < bboxMin.x || position.x > bboxMax.x ||
+            position.y < bboxMin.y || position.y > bboxMax.y ||
+            position.z < bboxMin.z || position.z > bboxMax.z) {
             vFiltered = 1.0;
         }
     }

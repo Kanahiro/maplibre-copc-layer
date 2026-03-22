@@ -16,6 +16,7 @@ Only the tiles visible on screen are fetched via SSE-based LOD, enabling smooth 
 - **LRU cache** — Configurable node count and memory limits
 - **Eye-Dome Lighting** — EDL post-processing for depth perception
 - **Color modes** — RGB, height ramp, intensity, classification, and white
+- **Filtering** — By classification, intensity range, or bounding box (WGS84)
 
 ## Install
 
@@ -40,7 +41,10 @@ const layer = new CopcLayer('https://example.com/pointcloud.copc.laz', {
   colorMode: 'rgb',
   pointSize: 4,
   enableEDL: true,
-  onInitialized: ({ center }) => map.flyTo({ center, zoom: 16 }),
+  onInitialized: ({ bounds }) => map.flyTo({
+    center: [(bounds.minx + bounds.maxx) / 2, (bounds.miny + bounds.maxy) / 2],
+    zoom: 16,
+  }),
 });
 
 map.on('load', () => map.addLayer(layer));
@@ -55,7 +59,7 @@ map.on('load', () => map.addLayer(layer));
 | `pointSize` | `number` | `6` | Point size in pixels |
 | `colorMode` | `'rgb' \| 'height' \| 'intensity' \| 'classification' \| 'white'` | `'rgb'` | Coloring mode |
 | `classificationColors` | `Record<number, [number, number, number]>` | `{}` | Override or add classification code colors (0–1 RGB). Merged with ASPRS defaults |
-| `filter` | `PointFilter` | `{}` | Filter points by classification or intensity range |
+| `filter` | `PointFilter` | `{}` | Filter points by classification, intensity range, or bounding box |
 | `alwaysShowRoot` | `boolean` | `false` | Always show root node even when SSE is below threshold |
 | `sseThreshold` | `number` | `8` | SSE threshold for LOD — lower loads more detail |
 | `depthTest` | `boolean` | `true` | Enable depth testing |
@@ -65,7 +69,7 @@ map.on('load', () => map.addLayer(layer));
 | `edlStrength` | `number` | `0.4` | EDL effect strength |
 | `edlRadius` | `number` | `1.5` | EDL sampling radius |
 | `debug` | `boolean` | `false` | Enable debug logging |
-| `onInitialized` | `(msg) => void` | — | Called with `{ nodeCount, center }` after COPC header loads |
+| `onInitialized` | `(msg) => void` | — | Called with `{ nodeCount, bounds }` after COPC header loads. `bounds` contains `minx/maxx/miny/maxy/minz/maxz` in WGS84 |
 
 ### Methods
 
@@ -76,7 +80,7 @@ map.on('load', () => map.addLayer(layer));
 | `setDepthTest(enabled)` | Toggle depth testing |
 | `setEDLEnabled(enabled)` | Toggle Eye-Dome Lighting |
 | `updateEDLParameters({ strength?, radius? })` | Update EDL parameters |
-| `setFilter(filter)` | Update point filter (classification / intensity) |
+| `setFilter(filter)` | Update point filter (classification / intensity / bbox) |
 | `getFilter()` | Get current point filter |
 | `updateCacheConfig(config)` | Update cache limits at runtime |
 | `clearCache()` | Clear all cached nodes |

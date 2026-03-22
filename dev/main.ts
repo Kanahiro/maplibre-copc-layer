@@ -85,7 +85,22 @@ for (const code of Object.keys(CLASSIFICATION_LABELS)) {
 const filterState = {
 	intensityMin: 0,
 	intensityMax: 1,
+	bboxMinX: 0,
+	bboxMaxX: 0,
+	bboxMinY: 0,
+	bboxMaxY: 0,
+	bboxMinZ: 0,
+	bboxMaxZ: 0,
 };
+
+let bboxBounds: {
+	minx: number;
+	maxx: number;
+	miny: number;
+	maxy: number;
+	minz: number;
+	maxz: number;
+} | null = null;
 
 // --- Map ---
 
@@ -148,6 +163,25 @@ function applyFilter() {
 		];
 	}
 
+	if (bboxBounds) {
+		const bbox: Record<string, number> = {};
+		if (filterState.bboxMinX > bboxBounds.minx)
+			bbox.minx = filterState.bboxMinX;
+		if (filterState.bboxMaxX < bboxBounds.maxx)
+			bbox.maxx = filterState.bboxMaxX;
+		if (filterState.bboxMinY > bboxBounds.miny)
+			bbox.miny = filterState.bboxMinY;
+		if (filterState.bboxMaxY < bboxBounds.maxy)
+			bbox.maxy = filterState.bboxMaxY;
+		if (filterState.bboxMinZ > bboxBounds.minz)
+			bbox.minz = filterState.bboxMinZ;
+		if (filterState.bboxMaxZ < bboxBounds.maxz)
+			bbox.maxz = filterState.bboxMaxZ;
+		if (Object.keys(bbox).length > 0) {
+			filter.bbox = bbox;
+		}
+	}
+
 	copcLayer.setFilter(filter);
 }
 
@@ -176,7 +210,15 @@ function loadCopc() {
 		debug: true,
 		alwaysShowRoot: true,
 		onInitialized: (message) => {
-			map.flyTo({ center: message.center, zoom: 16 });
+			const { bounds } = message;
+			map.flyTo({
+				center: [
+					(bounds.minx + bounds.maxx) / 2,
+					(bounds.miny + bounds.maxy) / 2,
+				],
+				zoom: 16,
+			});
+			setupBboxSliders(bounds);
 		},
 	});
 
@@ -271,6 +313,57 @@ for (const code of Object.keys(CLASSIFICATION_LABELS)) {
 	classFilterFolder
 		.add(classificationVisibility, code)
 		.name(`${code}: ${label}`)
+		.onChange(applyFilter);
+}
+
+let bboxFolder = filterFolder.addFolder('Bbox (WGS84)');
+
+function setupBboxSliders(bounds: {
+	minx: number;
+	maxx: number;
+	miny: number;
+	maxy: number;
+	minz: number;
+	maxz: number;
+}) {
+	bboxBounds = bounds;
+	filterState.bboxMinX = bounds.minx;
+	filterState.bboxMaxX = bounds.maxx;
+	filterState.bboxMinY = bounds.miny;
+	filterState.bboxMaxY = bounds.maxy;
+	filterState.bboxMinZ = bounds.minz;
+	filterState.bboxMaxZ = bounds.maxz;
+
+	bboxFolder.destroy();
+	bboxFolder = filterFolder.addFolder('Bbox (WGS84)');
+
+	const lngStep = (bounds.maxx - bounds.minx) / 1000;
+	const latStep = (bounds.maxy - bounds.miny) / 1000;
+	const zStep = Math.max(0.1, (bounds.maxz - bounds.minz) / 1000);
+
+	bboxFolder
+		.add(filterState, 'bboxMinX', bounds.minx, bounds.maxx, lngStep)
+		.name('Min X (lng)')
+		.onChange(applyFilter);
+	bboxFolder
+		.add(filterState, 'bboxMaxX', bounds.minx, bounds.maxx, lngStep)
+		.name('Max X (lng)')
+		.onChange(applyFilter);
+	bboxFolder
+		.add(filterState, 'bboxMinY', bounds.miny, bounds.maxy, latStep)
+		.name('Min Y (lat)')
+		.onChange(applyFilter);
+	bboxFolder
+		.add(filterState, 'bboxMaxY', bounds.miny, bounds.maxy, latStep)
+		.name('Max Y (lat)')
+		.onChange(applyFilter);
+	bboxFolder
+		.add(filterState, 'bboxMinZ', bounds.minz, bounds.maxz, zStep)
+		.name('Min Z (m)')
+		.onChange(applyFilter);
+	bboxFolder
+		.add(filterState, 'bboxMaxZ', bounds.minz, bounds.maxz, zStep)
+		.name('Max Z (m)')
 		.onChange(applyFilter);
 }
 
