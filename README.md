@@ -14,7 +14,7 @@ Only the tiles visible on screen are fetched via SSE-based LOD, enabling smooth 
 - **Streaming LOD** — Screen-space error based level-of-detail fetches only what you see
 - **Web Worker** — COPC decoding and coordinate reprojection run off the main thread
 - **LRU cache** — Configurable node count and memory limits
-- **Eye-Dome Lighting** — EDL post-processing for depth perception
+- **Ambient Occlusion** — SSAO post-processing for depth perception
 - **Color modes** — RGB, height ramp, intensity, classification, and white
 - **Custom color expressions** — User-defined linear/discrete color ramps for height and intensity
 - **Filtering** — By classification, intensity range, or bounding box (WGS84)
@@ -41,7 +41,7 @@ const map = new maplibregl.Map({
 const layer = new CopcLayer('https://example.com/pointcloud.copc.laz', {
   colorMode: 'rgb',
   pointSize: 4,
-  enableEDL: true,
+  enableSSAO: true,
   onInitialized: ({ bounds }) => map.flyTo({
     center: [(bounds.minx + bounds.maxx) / 2, (bounds.miny + bounds.maxy) / 2],
     zoom: 16,
@@ -68,9 +68,9 @@ map.on('load', () => map.addLayer(layer));
 | `depthTest` | `boolean` | `true` | Enable depth testing |
 | `maxCacheSize` | `number` | `100` | Max cached nodes |
 | `maxCacheMemory` | `number` | `104857600` | Max cache memory in bytes (100 MB) |
-| `enableEDL` | `boolean` | `false` | Enable Eye-Dome Lighting |
-| `edlStrength` | `number` | `0.4` | EDL effect strength |
-| `edlRadius` | `number` | `1.5` | EDL sampling radius |
+| `enableSSAO` | `boolean` | `false` | Enable Screen Space Ambient Occlusion |
+| `ssaoStrength` | `number` | `1.0` | SSAO effect strength |
+| `ssaoRadius` | `number` | `8.0` | SSAO sampling radius in pixels |
 | `debug` | `boolean` | `false` | Enable debug logging |
 | `onInitialized` | `(msg) => void` | — | Called with `{ nodeCount, bounds }` after COPC header loads. `bounds` contains `minx/maxx/miny/maxy/minz/maxz` in WGS84 |
 
@@ -85,8 +85,8 @@ map.on('load', () => map.addLayer(layer));
 | `setClassificationColors(colors)` | Update classification colors (instant, no reload) |
 | `setSseThreshold(threshold)` | Update SSE threshold |
 | `setDepthTest(enabled)` | Toggle depth testing |
-| `setEDLEnabled(enabled)` | Toggle Eye-Dome Lighting |
-| `setEDLParameters({ strength?, radius? })` | Update EDL parameters |
+| `setSSAOEnabled(enabled)` | Toggle Screen Space Ambient Occlusion |
+| `setSSAOParameters({ strength?, radius? })` | Update SSAO parameters |
 | `setFilter(filter)` | Update point filter (classification / intensity / bbox) |
 | `getFilter()` | Get current point filter |
 | `setCacheConfig(config)` | Update cache limits at runtime |
@@ -164,13 +164,13 @@ layer.setFilter({
 });
 ```
 
-### Eye-Dome Lighting
+### Ambient Occlusion
 
 ```ts
 const layer = new CopcLayer('https://example.com/pointcloud.copc.laz', {
-  enableEDL: true,
-  edlStrength: 0.6,
-  edlRadius: 2.0,
+  enableSSAO: true,
+  ssaoStrength: 1.0,
+  ssaoRadius: 8.0,
 });
 ```
 
