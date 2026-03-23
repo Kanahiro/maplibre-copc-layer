@@ -103,8 +103,4 @@ void main() {
     gl_Position = projectionMatrix * mvPosition;
 
     gl_PointSize = vFiltered > 0.5 ? 0.0 : size;
-
-    #ifdef USE_SIZEATTENUATION
-        gl_PointSize *= (scale / -mvPosition.z);
-    #endif
 }
