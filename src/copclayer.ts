@@ -3,8 +3,8 @@ import * as THREE from 'three';
 import { CacheManager, type CachedNodeData } from './cache-manager';
 import pointsVertexShader from './shaders/points.vert.glsl';
 import pointsFragmentShader from './shaders/points.frag.glsl';
-import edlVertexShader from './shaders/edl.vert.glsl';
-import edlFragmentShader from './shaders/edl.frag.glsl';
+import ssaoVertexShader from './shaders/ssao.vert.glsl';
+import ssaoFragmentShader from './shaders/ssao.frag.glsl';
 import CopcWorker from './worker/index.ts?worker&inline';
 import {
 	DEFAULT_CLASSIFICATION_COLORS,
@@ -53,9 +53,9 @@ export interface CopcLayerOptions {
 	depthTest?: boolean;
 	maxCacheMemory?: number;
 	debug?: boolean;
-	enableEDL?: boolean;
-	edlStrength?: number;
-	edlRadius?: number;
+	enableSSAO?: boolean;
+	ssaoStrength?: number;
+	ssaoRadius?: number;
 	onInitialized?: (message: {
 		nodeCount: number;
 		bounds: {
@@ -87,9 +87,9 @@ const DEFAULT_OPTIONS: ResolvedOptions = {
 	depthTest: true,
 	maxCacheMemory: 100 * 1024 * 1024,
 	debug: false,
-	enableEDL: false,
-	edlStrength: 0.4,
-	edlRadius: 1.5,
+	enableSSAO: false,
+	ssaoStrength: 1.0,
+	ssaoRadius: 8.0,
 	onInitialized: () => {},
 } as const;
 
@@ -166,13 +166,13 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 	private sceneCenter: maplibregl.MercatorCoordinate | null = null;
 	private colorTarget?: THREE.WebGLRenderTarget;
 	private depthTarget?: THREE.WebGLRenderTarget;
-	private edlMaterial?: THREE.ShaderMaterial;
-	private edlQuadScene?: THREE.Scene;
-	private edlQuadCamera?: THREE.OrthographicCamera;
+	private ssaoMaterial?: THREE.ShaderMaterial;
+	private ssaoQuadScene?: THREE.Scene;
+	private ssaoQuadCamera?: THREE.OrthographicCamera;
 	private readonly _tempMatrix1 = new THREE.Matrix4();
 	private readonly _tempMatrix2 = new THREE.Matrix4();
-	private _lastEdlWidth = 0;
-	private _lastEdlHeight = 0;
+	private _lastPostProcessWidth = 0;
+	private _lastPostProcessHeight = 0;
 	private _lastUpdatePointsTime = 0;
 	private classificationFilterTexture: THREE.DataTexture;
 	private classificationColorTexture: THREE.DataTexture;
@@ -490,8 +490,11 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 		this.renderer.autoClear = false;
 
-		if (this.options.enableEDL) {
-			this.setupEDL();
+		if (this.options.enableSSAO) {
+			this.setupPostProcessTargets();
+		}
+		if (this.options.enableSSAO) {
+			this.setupSSAO();
 		}
 	}
 
@@ -651,18 +654,18 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 			this.map.getCanvas().height,
 		);
 
-		if (this.options.enableEDL) {
-			this.updateEDLSize();
+		if (this.options.enableSSAO) {
+			this.updatePostProcessSize();
 		}
 
 		this.renderer.resetState();
 
 		if (
-			this.options.enableEDL &&
+			this.options.enableSSAO &&
 			this.colorTarget &&
 			this.depthTarget &&
-			this.edlQuadScene &&
-			this.edlQuadCamera
+			this.ssaoQuadScene &&
+			this.ssaoQuadCamera
 		) {
 			this.renderer.setRenderTarget(this.depthTarget);
 			this.renderer.clear();
@@ -673,7 +676,7 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 			this.renderer.render(this.scene, this.camera);
 
 			this.renderer.setRenderTarget(null);
-			this.renderer.render(this.edlQuadScene, this.edlQuadCamera);
+			this.renderer.render(this.ssaoQuadScene, this.ssaoQuadCamera);
 		} else {
 			this.renderer.render(this.scene, this.camera);
 		}
@@ -705,15 +708,16 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		this.colorTarget = undefined;
 		this.depthTarget?.dispose();
 		this.depthTarget = undefined;
-		this.edlMaterial?.dispose();
-		this.edlMaterial = undefined;
-		this.edlQuadScene?.clear();
-		this.edlQuadScene = undefined;
-		this.edlQuadCamera = undefined;
+		this.ssaoMaterial?.dispose();
+		this.ssaoMaterial = undefined;
+		this.ssaoQuadScene?.clear();
+		this.ssaoQuadScene = undefined;
+		this.ssaoQuadCamera = undefined;
 	}
 
-	private setupEDL(): void {
+	private setupPostProcessTargets(): void {
 		if (!this.renderer || !this.map) return;
+		if (this.colorTarget && this.depthTarget) return;
 
 		const width = this.map.getCanvas().width;
 		const height = this.map.getCanvas().height;
@@ -731,46 +735,51 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 			depthBuffer: true,
 			depthTexture: new THREE.DepthTexture(width, height),
 		});
-
-		this.edlMaterial = new THREE.ShaderMaterial({
-			uniforms: {
-				tColor: { value: this.colorTarget.texture },
-				tDepth: { value: this.depthTarget.depthTexture },
-				screenSize: { value: new THREE.Vector2(width, height) },
-				edlStrength: { value: this.options.edlStrength },
-				radius: { value: this.options.edlRadius },
-			},
-			vertexShader: edlVertexShader,
-			fragmentShader: edlFragmentShader,
-		});
-
-		this.edlQuadScene = new THREE.Scene();
-		this.edlQuadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-
-		const geometry = new THREE.PlaneGeometry(2, 2);
-		const quad = new THREE.Mesh(geometry, this.edlMaterial);
-		this.edlQuadScene.add(quad);
 	}
 
-	private updateEDLSize(): void {
-		if (
-			!this.map ||
-			!this.colorTarget ||
-			!this.depthTarget ||
-			!this.edlMaterial
-		)
+	private setupSSAO(): void {
+		if (!this.renderer || !this.map || !this.colorTarget || !this.depthTarget)
 			return;
 
 		const width = this.map.getCanvas().width;
 		const height = this.map.getCanvas().height;
 
-		if (width === this._lastEdlWidth && height === this._lastEdlHeight) return;
+		this.ssaoMaterial = new THREE.ShaderMaterial({
+			uniforms: {
+				tColor: { value: this.colorTarget.texture },
+				tDepth: { value: this.depthTarget.depthTexture },
+				screenSize: { value: new THREE.Vector2(width, height) },
+				ssaoRadius: { value: this.options.ssaoRadius },
+				ssaoStrength: { value: this.options.ssaoStrength },
+			},
+			vertexShader: ssaoVertexShader,
+			fragmentShader: ssaoFragmentShader,
+		});
 
-		this._lastEdlWidth = width;
-		this._lastEdlHeight = height;
+		this.ssaoQuadScene = new THREE.Scene();
+		this.ssaoQuadCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+		const geometry = new THREE.PlaneGeometry(2, 2);
+		const quad = new THREE.Mesh(geometry, this.ssaoMaterial);
+		this.ssaoQuadScene.add(quad);
+	}
+
+	private updatePostProcessSize(): void {
+		if (!this.map || !this.colorTarget || !this.depthTarget) return;
+
+		const width = this.map.getCanvas().width;
+		const height = this.map.getCanvas().height;
+
+		if (width === this._lastPostProcessWidth && height === this._lastPostProcessHeight) return;
+
+		this._lastPostProcessWidth = width;
+		this._lastPostProcessHeight = height;
 		this.colorTarget.setSize(width, height);
 		this.depthTarget.setSize(width, height);
-		this.edlMaterial.uniforms.screenSize.value.set(width, height);
+
+		if (this.ssaoMaterial) {
+			this.ssaoMaterial.uniforms.screenSize.value.set(width, height);
+		}
 	}
 
 	private lngLatToMercator(
@@ -919,42 +928,44 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		this.updateVisibleNodes();
 	}
 
-	public setEDLEnabled(enabled: boolean): void {
-		this.options.enableEDL = enabled;
-		if (enabled && !this.edlMaterial) {
-			this.setupEDL();
+	public setSSAOEnabled(enabled: boolean): void {
+		this.options.enableSSAO = enabled;
+		if (enabled && !this.ssaoMaterial) {
+			if (!this.colorTarget || !this.depthTarget) {
+				this.setupPostProcessTargets();
+			}
+			this.setupSSAO();
 		}
-		this.rebuildAllMaterials();
 		this.map?.triggerRepaint();
 	}
 
-	public setEDLParameters(params: {
+	public setSSAOParameters(params: {
 		strength?: number;
 		radius?: number;
 	}): void {
-		if (!this.edlMaterial) return;
+		if (!this.ssaoMaterial) return;
 
 		if (params.strength !== undefined) {
-			this.options.edlStrength = params.strength;
-			this.edlMaterial.uniforms.edlStrength.value = params.strength;
+			this.options.ssaoStrength = params.strength;
+			this.ssaoMaterial.uniforms.ssaoStrength.value = params.strength;
 		}
 		if (params.radius !== undefined) {
-			this.options.edlRadius = params.radius;
-			this.edlMaterial.uniforms.radius.value = params.radius;
+			this.options.ssaoRadius = params.radius;
+			this.ssaoMaterial.uniforms.ssaoRadius.value = params.radius;
 		}
 
 		this.map?.triggerRepaint();
 	}
 
-	public getEDLParameters(): {
+	public getSSAOParameters(): {
 		enabled: boolean;
 		strength: number;
 		radius: number;
 	} {
 		return {
-			enabled: this.options.enableEDL,
-			strength: this.options.edlStrength,
-			radius: this.options.edlRadius,
+			enabled: this.options.enableSSAO,
+			strength: this.options.ssaoStrength,
+			radius: this.options.ssaoRadius,
 		};
 	}
 

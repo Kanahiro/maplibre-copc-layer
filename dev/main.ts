@@ -88,9 +88,9 @@ const state = {
 	colorMode: 'rgb' as ColorMode,
 	sseThreshold: 2,
 	depthTest: true,
-	enableEDL: true,
-	edlStrength: 5,
-	edlRadius: 1.5,
+	enableSSAO: false,
+	ssaoStrength: 1.0,
+	ssaoRadius: 8.0,
 	stats: '',
 };
 
@@ -250,9 +250,9 @@ function loadCopc() {
 		classificationColors: getClassificationColorsMap(),
 		sseThreshold: state.sseThreshold,
 		depthTest: state.depthTest,
-		enableEDL: state.enableEDL,
-		edlStrength: state.edlStrength,
-		edlRadius: state.edlRadius,
+		enableSSAO: state.enableSSAO,
+		ssaoStrength: state.ssaoStrength,
+		ssaoRadius: state.ssaoRadius,
 		debug: true,
 		alwaysShowRoot: true,
 		onInitialized: (message) => {
@@ -332,24 +332,24 @@ rendering
 		copcLayer?.setDepthTest(v);
 	});
 
-const edl = gui.addFolder('Eye-Dome Lighting');
-edl
-	.add(state, 'enableEDL')
+const ssao = gui.addFolder('Ambient Occlusion');
+ssao
+	.add(state, 'enableSSAO')
 	.name('Enable')
 	.onChange((v: boolean) => {
-		copcLayer?.setEDLEnabled(v);
+		copcLayer?.setSSAOEnabled(v);
 	});
-edl
-	.add(state, 'edlStrength', 0, 10, 0.1)
+ssao
+	.add(state, 'ssaoStrength', 0, 3, 0.1)
 	.name('Strength')
 	.onChange((v: number) => {
-		copcLayer?.setEDLParameters({ strength: v });
+		copcLayer?.setSSAOParameters({ strength: v });
 	});
-edl
-	.add(state, 'edlRadius', 0, 5, 0.1)
+ssao
+	.add(state, 'ssaoRadius', 1, 30, 0.5)
 	.name('Radius')
 	.onChange((v: number) => {
-		copcLayer?.setEDLParameters({ radius: v });
+		copcLayer?.setSSAOParameters({ radius: v });
 	});
 
 const classificationFolder = gui.addFolder('Classification Colors');
