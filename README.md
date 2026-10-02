@@ -185,6 +185,10 @@ pnpm test      # Run tests
 pnpm build     # Build library
 ```
 
+The Cloudflare Workers demo uses Static Assets from `demo/`. In Workers Builds, use
+`pnpm build:demo` as the build command. `npx wrangler versions upload` uploads a
+preview version; `npx wrangler deploy` publishes it to production.
+
 The package has no `copc` or `laz-perf` npm dependency. COPC metadata and point records are read by the worker; LAZ chunks are decoded by the vendored `laz-perf` WebAssembly build, which is bundled into `dist`. Building from source requires the Git submodule above. The COPC server must support HTTP `206 Partial Content` and allow cross-origin Range requests. Point formats 6, 7, and 8 are supported.
 
 The optional live integration test reads the public demo file and needs network access:
