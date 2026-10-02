@@ -11,6 +11,7 @@ export class GlobeControl implements maplibregl.IControl {
 
 	onAdd(map: maplibregl.Map): HTMLElement {
 		this.map = map
+		this.isGlobe = (map.getProjection()?.type ?? map.getStyle()?.projection?.type) === 'globe'
 
 		this.container = document.createElement('div')
 		this.container.classList.add(

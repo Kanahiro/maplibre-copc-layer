@@ -1,6 +1,7 @@
 import maplibregl from 'maplibre-gl';
 import * as THREE from 'three';
 import { CacheManager, type CachedNodeData } from './cache-manager';
+import { NodeResidency } from './node-residency';
 import pointsVertexShader from './shaders/points.vert.glsl';
 import pointsFragmentShader from './shaders/points.frag.glsl';
 import ssaoVertexShader from './shaders/ssao.vert.glsl';
@@ -67,6 +68,7 @@ export interface CopcLayerOptions {
 			maxz: number;
 		};
 	}) => void;
+	onError?: (message: string) => void;
 }
 
 type ResolvedOptions = Required<
@@ -82,15 +84,16 @@ const DEFAULT_OPTIONS: ResolvedOptions = {
 	classificationColors: { ...DEFAULT_CLASSIFICATION_COLORS },
 	filter: {},
 	alwaysShowRoot: false,
-	maxCacheSize: 100,
+	maxCacheSize: Infinity,
 	sseThreshold: 8,
 	depthTest: true,
-	maxCacheMemory: 100 * 1024 * 1024,
+	maxCacheMemory: 256 * 1024 * 1024,
 	debug: false,
 	enableSSAO: false,
 	ssaoStrength: 1.0,
 	ssaoRadius: 8.0,
 	onInitialized: () => {},
+	onError: () => {},
 } as const;
 
 const MAX_COLOR_STOPS = 16;
@@ -154,15 +157,15 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 	public readonly camera: THREE.Camera;
 	public readonly scene: THREE.Scene;
 	public renderer?: THREE.WebGLRenderer;
-	public readonly worker: Worker;
+	public worker: Worker;
 	public readonly cacheManager: CacheManager;
+	private readonly residency: NodeResidency;
 
 	private readonly options: ResolvedOptions;
-	private visibleNodes: string[] = [];
 	private workerInitialized = false;
-	private pendingRequests = new Set<string>();
-	private requestQueue: string[] = [];
-	private lastCameraPosition: [number, number, number] | null = null;
+	private workerFailed = false;
+	private lastViewKey = '';
+	private viewReady = false;
 	private sceneCenter: maplibregl.MercatorCoordinate | null = null;
 	private colorTarget?: THREE.WebGLRenderTarget;
 	private depthTarget?: THREE.WebGLRenderTarget;
@@ -173,9 +176,10 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 	private readonly _tempMatrix2 = new THREE.Matrix4();
 	private _lastPostProcessWidth = 0;
 	private _lastPostProcessHeight = 0;
-	private _lastUpdatePointsTime = 0;
 	private classificationFilterTexture: THREE.DataTexture;
 	private classificationColorTexture: THREE.DataTexture;
+	private pointMaterial: THREE.ShaderMaterial;
+	private resourcesDisposed = false;
 
 	constructor(
 		url: string,
@@ -201,11 +205,18 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 
 		this.classificationFilterTexture =
 			this.createClassificationFilterTexture();
+		this.updateClassificationFilterTexture();
 		this.classificationColorTexture =
 			this.createClassificationColorTexture();
+		this.pointMaterial = this.createPointMaterial();
 
 		this.worker = new CopcWorker();
 		this.setupWorkerMessageHandlers();
+		this.residency = new NodeResidency(
+			this.cacheManager,
+			this.scene,
+			(nodeId) => this.worker.postMessage({ type: 'loadNode', node: nodeId }),
+		);
 	}
 
 	private setupWorkerMessageHandlers() {
@@ -215,6 +226,7 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 			switch (message.type) {
 				case 'initialized':
 					this.workerInitialized = true;
+					this.workerFailed = false;
 					if (!this.options.heightColor) {
 						const { bounds } = message;
 						this.options.heightColor = [
@@ -227,7 +239,8 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 							[1, 0, 0],
 						];
 					}
-					this.requestNodeData('0-0-0-0');
+					this.updateAllColorUniforms();
+					this.updatePoints();
 					this.options.onInitialized?.(message);
 					break;
 				case 'nodeLoaded':
@@ -241,12 +254,14 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 					);
 					break;
 				case 'nodesToLoad':
-					this.cancelAllPendingRequests();
-					this.lastCameraPosition = message.cameraPosition;
-					this.visibleNodes = message.nodes;
-					this.updateVisibleNodes();
+					this.residency.setDesired(message.nodes);
 					break;
 				case 'error':
+					if (message.fatal) this.workerFailed = true;
+					if (message.node) {
+						this.residency.fail(message.node);
+					}
+					this.options.onError(message.message);
 					if (this.options.debug) {
 						console.error('[CopcLayer] Worker error:', message.message);
 					}
@@ -257,6 +272,8 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		};
 
 		this.worker.onerror = (error) => {
+			this.workerFailed = true;
+			this.options.onError(error.message);
 			if (this.options.debug) {
 				console.error('[CopcLayer] Worker error event:', error);
 			}
@@ -271,37 +288,32 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		classificationsBuffer: ArrayBuffer,
 		intensitiesBuffer: ArrayBuffer,
 	): void {
-		this.pendingRequests.delete(nodeId);
-		this.removeFromRequestQueue(nodeId);
-
 		const positions = new Float64Array(positionsBuffer);
 		const colors = new Float32Array(colorsBuffer);
 		const heights = new Float32Array(heightsBuffer);
 		const classifications = new Uint8Array(classificationsBuffer);
 		const intensities = new Float32Array(intensitiesBuffer);
 
-		const nodeData = CacheManager.createNodeData(
-			nodeId,
-			positions,
-			colors,
-			heights,
-			classifications,
-			intensities,
-			{
-				pointSize: this.options.pointSize,
-				depthTest: this.options.depthTest,
-			},
-		);
+		// Transferred buffers belong to this layer. Copying them again doubles the
+		// main-thread working set without protecting any outside caller.
+		const nodeData: CachedNodeData = {
+			nodeId, positions, colors, heights, classifications, intensities,
+			pointCount: positions.length / 3,
+			materialConfig: { pointSize: this.options.pointSize, depthTest: this.options.depthTest },
+			lastAccessed: Date.now(),
+			sizeBytes: CacheManager.estimateNodeSize(positions, colors, heights, classifications, intensities),
+			sharedMaterial: true,
+		};
 
 		const geometry = new THREE.BufferGeometry();
 
 		if (this.sceneCenter) {
 			const { x: cx, y: cy, z: cz } = this.sceneCenter;
-			const relativePositions = new Float32Array(positions.length);
-			for (let i = 0; i < positions.length; i += 3) {
-				relativePositions[i] = positions[i] - cx;
-				relativePositions[i + 1] = positions[i + 1] - cy;
-				relativePositions[i + 2] = positions[i + 2] - cz;
+			const relativePositions = new Float32Array(nodeData.positions.length);
+			for (let i = 0; i < nodeData.positions.length; i += 3) {
+				relativePositions[i] = nodeData.positions[i] - cx;
+				relativePositions[i + 1] = nodeData.positions[i + 1] - cy;
+				relativePositions[i + 2] = nodeData.positions[i + 2] - cz;
 			}
 			geometry.setAttribute(
 				'position',
@@ -310,19 +322,19 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		} else {
 			geometry.setAttribute(
 				'position',
-				new THREE.BufferAttribute(new Float32Array(positions), 3),
+				new THREE.BufferAttribute(new Float32Array(nodeData.positions), 3),
 			);
 		}
 
-		geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+		geometry.setAttribute('color', new THREE.BufferAttribute(nodeData.colors, 3));
 		geometry.setAttribute(
 			'heightValue',
-			new THREE.BufferAttribute(heights, 1),
+			new THREE.BufferAttribute(nodeData.heights, 1),
 		);
 
-		const classificationAttr = new Float32Array(classifications.length);
-		for (let i = 0; i < classifications.length; i++) {
-			classificationAttr[i] = classifications[i];
+		const classificationAttr = new Float32Array(nodeData.classifications.length);
+		for (let i = 0; i < nodeData.classifications.length; i++) {
+			classificationAttr[i] = nodeData.classifications[i];
 		}
 		geometry.setAttribute(
 			'classification',
@@ -330,80 +342,16 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		);
 		geometry.setAttribute(
 			'intensity',
-			new THREE.BufferAttribute(intensities, 1),
+			new THREE.BufferAttribute(nodeData.intensities, 1),
 		);
+		nodeData.sizeBytes += geometry.getAttribute('position').array.byteLength + classificationAttr.byteLength;
 
-		const material = this.createPointMaterial();
-		const points = new THREE.Points(geometry, material);
+		const points = new THREE.Points(geometry, this.pointMaterial);
 
 		nodeData.geometry = geometry;
 		nodeData.points = points;
 
-		const protectedNodes = new Set(this.visibleNodes);
-		this.cacheManager.set(nodeData, protectedNodes);
-	}
-
-	private updateVisibleNodes(): void {
-		while (this.scene.children.length > 0) {
-			this.scene.remove(this.scene.children[0]);
-		}
-
-		const nodesToRequest: string[] = [];
-
-		for (const nodeId of this.visibleNodes) {
-			const cachedData = this.cacheManager.get(nodeId);
-
-			if (cachedData?.points) {
-				this.scene.add(cachedData.points);
-				if (this.needsMaterialUpdate(cachedData)) {
-					this.updateNodeMaterial(cachedData);
-				}
-			} else if (!this.pendingRequests.has(nodeId)) {
-				nodesToRequest.push(nodeId);
-			}
-		}
-
-		for (const nodeId of this.prioritizeNodeRequests(nodesToRequest)) {
-			this.requestNodeData(nodeId);
-		}
-	}
-
-	private requestNodeData(nodeId: string): void {
-		if (this.pendingRequests.has(nodeId)) return;
-
-		this.pendingRequests.add(nodeId);
-		this.requestQueue.push(nodeId);
-
-		this.worker.postMessage({ type: 'loadNode', node: nodeId });
-	}
-
-	private needsMaterialUpdate(nodeData: CachedNodeData): boolean {
-		const { materialConfig: c } = nodeData;
-		return (
-			c.pointSize !== this.options.pointSize ||
-			c.depthTest !== this.options.depthTest
-		);
-	}
-
-	private updateNodeMaterial(nodeData: CachedNodeData): void {
-		if (!nodeData.points) return;
-
-		if (nodeData.points.material instanceof THREE.Material) {
-			nodeData.points.material.dispose();
-		}
-
-		nodeData.points.material = this.createPointMaterial();
-		nodeData.materialConfig = {
-			pointSize: this.options.pointSize,
-			depthTest: this.options.depthTest,
-		};
-	}
-
-	private rebuildAllMaterials(): void {
-		for (const nodeId of this.cacheManager.getCachedNodeIds()) {
-			const nodeData = this.cacheManager.get(nodeId);
-			if (nodeData) this.updateNodeMaterial(nodeData);
-		}
+		this.residency.admit(nodeData);
 	}
 
 	private updateAllColorUniforms(): void {
@@ -414,66 +362,27 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 				: this.options.heightColor;
 		const exprUniforms = parseColorExpressionUniforms(expr);
 
-		for (const nodeId of this.cacheManager.getCachedNodeIds()) {
-			const nodeData = this.cacheManager.peek(nodeId);
-			if (!nodeData?.points) continue;
-			const mat = nodeData.points.material as THREE.ShaderMaterial;
-			mat.uniforms.colorComputeMode.value = modeValue;
-			mat.uniforms.colorExprMode.value = exprUniforms.mode;
-			mat.uniforms.colorExprStopCount.value = exprUniforms.count;
-			mat.uniforms.colorExprStopValues.value = exprUniforms.values;
-			mat.uniforms.colorExprStopColors.value = exprUniforms.colors;
-			mat.uniforms.classificationColorTexture.value =
-				this.classificationColorTexture;
-		}
-	}
-
-	private removeFromRequestQueue(nodeId: string): void {
-		const index = this.requestQueue.indexOf(nodeId);
-		if (index > -1) this.requestQueue.splice(index, 1);
-	}
-
-	private cancelAllPendingRequests(): void {
-		if (this.pendingRequests.size === 0) return;
-
-		this.worker.postMessage({
-			type: 'cancelRequests',
-			nodes: Array.from(this.pendingRequests),
-		});
-
-		this.pendingRequests.clear();
-		this.requestQueue.length = 0;
-	}
-
-	private prioritizeNodeRequests(nodeIds: string[]): string[] {
-		if (!this.lastCameraPosition || nodeIds.length <= 1) return nodeIds;
-
-		const [camLon, camLat] = this.lastCameraPosition;
-
-		const nodesWithPriority = nodeIds.map((nodeId) => {
-			const parts = nodeId.split('-').map(Number);
-			const [depth, x, y] = parts;
-			const nodeSize = 1.0 / 2 ** depth;
-			const nodeCenterX = x * nodeSize + nodeSize / 2;
-			const nodeCenterY = y * nodeSize + nodeSize / 2;
-
-			const dx = nodeCenterX - camLon;
-			const dy = nodeCenterY - camLat;
-			const distance = Math.sqrt(dx * dx + dy * dy);
-
-			const depthPriority = depth * 10;
-			const distancePriority = distance > 0 ? 1000 / distance : 1000;
-			const priority = depthPriority + distancePriority * 0.1;
-
-			return { nodeId, priority };
-		});
-
-		nodesWithPriority.sort((a, b) => b.priority - a.priority);
-		return nodesWithPriority.map((n) => n.nodeId);
+		const uniforms = this.pointMaterial.uniforms;
+		uniforms.colorComputeMode.value = modeValue;
+		uniforms.colorExprMode.value = exprUniforms.mode;
+		uniforms.colorExprStopCount.value = exprUniforms.count;
+		uniforms.colorExprStopValues.value = exprUniforms.values;
+		uniforms.colorExprStopColors.value = exprUniforms.colors;
 	}
 
 	async onAdd(map: maplibregl.Map, gl: WebGLRenderingContext): Promise<void> {
+		if (this.resourcesDisposed) {
+			this.classificationFilterTexture = this.createClassificationFilterTexture();
+			this.updateClassificationFilterTexture();
+			this.classificationColorTexture = this.createClassificationColorTexture();
+			this.pointMaterial = this.createPointMaterial();
+			this.worker = new CopcWorker();
+			this.setupWorkerMessageHandlers();
+			this.resourcesDisposed = false;
+		}
 		this.map = map;
+		this.sceneCenter = maplibregl.MercatorCoordinate.fromLngLat(map.getCenter());
+		this.updateBboxUniforms();
 
 		this.worker.postMessage({
 			type: 'init',
@@ -498,37 +407,37 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		}
 	}
 
-	public setCacheConfig(config: Partial<CopcLayerOptions>): void {
+	public setCacheConfig(config: Pick<CopcLayerOptions, 'maxCacheSize' | 'maxCacheMemory' | 'debug'>): void {
 		Object.assign(this.options, config);
 
-		const protectedNodes = new Set(this.visibleNodes);
 		this.cacheManager.updateOptions(
 			{
 				maxNodes: this.options.maxCacheSize,
 				maxMemoryBytes: this.options.maxCacheMemory,
 				debug: this.options.debug,
 			},
-			protectedNodes,
+			new Set(this.residency.protectedNodes),
 		);
-
-		this.updateVisibleNodes();
 	}
 
 	public setPointSize(size: number): void {
 		this.options.pointSize = size;
-		this.rebuildAllMaterials();
+		this.pointMaterial.uniforms.size.value = size;
 		this.map?.triggerRepaint();
 	}
 
 	public setSseThreshold(threshold: number): void {
 		this.options.sseThreshold = threshold;
+		this.lastViewKey = '';
 		this.updatePoints();
 		this.map?.triggerRepaint();
 	}
 
 	public setDepthTest(enabled: boolean): void {
 		this.options.depthTest = enabled;
-		this.rebuildAllMaterials();
+		this.pointMaterial.depthTest = enabled;
+		this.pointMaterial.depthWrite = enabled;
+		this.pointMaterial.needsUpdate = true;
 		this.map?.triggerRepaint();
 	}
 
@@ -586,11 +495,7 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 	}
 
 	private updatePoints(): void {
-		if (!this.map || !this.workerInitialized) return;
-
-		const now = performance.now();
-		if (now - this._lastUpdatePointsTime < 100) return;
-		this._lastUpdatePointsTime = now;
+		if (!this.map || !this.workerInitialized || !this.viewReady || !this.sceneCenter) return;
 
 		const fov = this.map.transform.fov;
 		const height = this.map.transform.height;
@@ -598,14 +503,19 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 
 		const cameraLngLat = this.map.transform.getCameraLngLat().toArray();
 		const cameraAltitude = this.computeCameraAltitude(fov, height, zoom);
+		const cameraPosition: [number, number, number] = [...cameraLngLat, cameraAltitude];
+		const viewKey = JSON.stringify([cameraPosition, this.map.transform.width, height, fov, this.options.sseThreshold, this.camera.projectionMatrix.elements, this.sceneCenter.x, this.sceneCenter.y, this.sceneCenter.z]);
+		if (viewKey === this.lastViewKey) return;
+		this.lastViewKey = viewKey;
 
 		this.worker.postMessage({
 			type: 'updatePoints',
-			cameraPosition: [...cameraLngLat, cameraAltitude],
+			cameraPosition,
 			mapHeight: height,
 			fov,
 			sseThreshold: this.options.sseThreshold,
-			zoom,
+			frustumMatrix: this.camera.projectionMatrix.toArray(),
+			sceneOrigin: [this.sceneCenter.x, this.sceneCenter.y, this.sceneCenter.z],
 		});
 	}
 
@@ -618,7 +528,8 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		if (!this.sceneCenter || this.shouldUpdateSceneCenter()) {
 			const center = this.map.getCenter();
 			this.sceneCenter = maplibregl.MercatorCoordinate.fromLngLat(center);
-			this.clearCache();
+			this.rebaseCachedGeometry();
+			this.updateBboxUniforms();
 		}
 
 		const centerLngLat = this.sceneCenter.toLngLat();
@@ -646,12 +557,14 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		)
 		this._tempMatrix1.multiply(this._tempMatrix2);
 		this.camera.projectionMatrix.copy(this._tempMatrix1);
+		this.viewReady = true;
 
 		this.updatePoints();
 
 		this.renderer.setSize(
 			this.map.getCanvas().width,
 			this.map.getCanvas().height,
+			false, // MapLibre owns the canvas CSS size; changing it breaks pointer coordinates.
 		);
 
 		if (this.options.enableSSAO) {
@@ -681,7 +594,23 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 			this.renderer.render(this.scene, this.camera);
 		}
 
-		this.map.triggerRepaint();
+	}
+
+	private rebaseCachedGeometry(): void {
+		if (!this.sceneCenter) return;
+		const { x, y, z } = this.sceneCenter;
+		for (const nodeId of this.cacheManager.getCachedNodeIds()) {
+			const data = this.cacheManager.peek(nodeId);
+			const attribute = data?.geometry?.getAttribute('position') as THREE.BufferAttribute | undefined;
+			if (!data || !attribute) continue;
+			const values = attribute.array as Float32Array;
+			for (let i = 0; i < values.length; i += 3) {
+				values[i] = data.positions[i] - x;
+				values[i + 1] = data.positions[i + 1] - y;
+				values[i + 2] = data.positions[i + 2] - z;
+			}
+			attribute.needsUpdate = true;
+		}
 	}
 
 	private shouldUpdateSceneCenter(): boolean {
@@ -697,12 +626,19 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 
 	onRemove(_map: maplibregl.Map, _gl: WebGLRenderingContext): void {
 		this.worker.terminate();
-		this.cacheManager.clear();
+		this.workerInitialized = false;
+		this.workerFailed = false;
+		this.residency.reset();
+		this.renderer?.dispose();
+		this.renderer = undefined;
+		this.map = undefined;
 		this.classificationFilterTexture.dispose();
 		this.classificationColorTexture.dispose();
-		this.visibleNodes.length = 0;
-		this.pendingRequests.clear();
-		this.requestQueue.length = 0;
+		this.pointMaterial.dispose();
+		this.resourcesDisposed = true;
+		this.lastViewKey = '';
+		this.viewReady = false;
+		this.sceneCenter = null;
 
 		this.colorTarget?.dispose();
 		this.colorTarget = undefined;
@@ -710,9 +646,14 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		this.depthTarget = undefined;
 		this.ssaoMaterial?.dispose();
 		this.ssaoMaterial = undefined;
+		for (const object of this.ssaoQuadScene?.children ?? []) {
+			if (object instanceof THREE.Mesh) object.geometry.dispose();
+		}
 		this.ssaoQuadScene?.clear();
 		this.ssaoQuadScene = undefined;
 		this.ssaoQuadCamera = undefined;
+		this._lastPostProcessWidth = 0;
+		this._lastPostProcessHeight = 0;
 	}
 
 	private setupPostProcessTargets(): void {
@@ -841,7 +782,6 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 			},
 			uniforms: {
 				size: { value: this.options.pointSize },
-				scale: { value: window.devicePixelRatio },
 				classificationFilter: { value: this.classificationFilterTexture },
 				intensityRange: {
 					value: new THREE.Vector2(
@@ -913,19 +853,19 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 	}
 
 	public isLoading(): boolean {
-		return this.pendingRequests.size > 0 || !this.workerInitialized;
+		return this.residency.isLoading || (!this.workerInitialized && !this.workerFailed);
 	}
 
 	public getNodeStats(): NodeStats {
 		return {
 			loaded: this.cacheManager.size(),
-			visible: this.visibleNodes.length,
+			visible: this.residency.visibleCount,
 		};
 	}
 
 	public clearCache(): void {
-		this.cacheManager.clear();
-		this.updateVisibleNodes();
+		this.residency.clearCache();
+		this.map?.triggerRepaint();
 	}
 
 	public setSSAOEnabled(enabled: boolean): void {
@@ -943,15 +883,13 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 		strength?: number;
 		radius?: number;
 	}): void {
-		if (!this.ssaoMaterial) return;
-
 		if (params.strength !== undefined) {
 			this.options.ssaoStrength = params.strength;
-			this.ssaoMaterial.uniforms.ssaoStrength.value = params.strength;
+			if (this.ssaoMaterial) this.ssaoMaterial.uniforms.ssaoStrength.value = params.strength;
 		}
 		if (params.radius !== undefined) {
 			this.options.ssaoRadius = params.radius;
-			this.ssaoMaterial.uniforms.ssaoRadius.value = params.radius;
+			if (this.ssaoMaterial) this.ssaoMaterial.uniforms.ssaoRadius.value = params.radius;
 		}
 
 		this.map?.triggerRepaint();
@@ -972,8 +910,26 @@ export class CopcLayer implements maplibregl.CustomLayerInterface {
 	public setFilter(filter: PointFilter): void {
 		this.options.filter = filter;
 		this.updateClassificationFilterTexture();
-		this.rebuildAllMaterials();
+		this.updateFilterUniforms();
 		this.map?.triggerRepaint();
+	}
+
+	private updateFilterUniforms(): void {
+		const filter = this.options.filter;
+		const uniforms = this.pointMaterial.uniforms;
+		uniforms.useClassificationFilter.value = filter.classification !== undefined;
+		uniforms.useIntensityFilter.value = filter.intensityRange !== undefined;
+		uniforms.intensityRange.value.set(filter.intensityRange?.[0] ?? 0, filter.intensityRange?.[1] ?? 1);
+		this.updateBboxUniforms();
+	}
+
+	private updateBboxUniforms(): void {
+		const bbox = this.getBboxMercator();
+		const center = this.sceneCenter;
+		const uniforms = this.pointMaterial.uniforms;
+		uniforms.useBboxFilter.value = bbox !== null;
+		uniforms.bboxMin.value.set(bbox ? bbox.min[0] - (center?.x ?? 0) : 0, bbox ? bbox.min[1] - (center?.y ?? 0) : 0, bbox ? bbox.min[2] - (center?.z ?? 0) : 0);
+		uniforms.bboxMax.value.set(bbox ? bbox.max[0] - (center?.x ?? 0) : 0, bbox ? bbox.max[1] - (center?.y ?? 0) : 0, bbox ? bbox.max[2] - (center?.z ?? 0) : 0);
 	}
 
 	public getFilter(): PointFilter {

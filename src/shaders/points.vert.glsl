@@ -1,5 +1,4 @@
 uniform float size;
-uniform float scale;
 
 attribute float heightValue;
 attribute float classification;

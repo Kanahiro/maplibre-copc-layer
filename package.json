@@ -13,8 +13,7 @@
 		"./package.json": "./package.json"
 	},
 	"files": [
-		"dist",
-		"src"
+		"dist"
 	],
 	"scripts": {
 		"build": "vite build",
@@ -26,7 +25,6 @@
 		"prepublishOnly": "pnpm run build"
 	},
 	"dependencies": {
-		"copc": "^0.0.8",
 		"proj4": "^2.15.0"
 	},
 	"peerDependencies": {
