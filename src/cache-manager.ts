@@ -10,6 +10,8 @@ export interface CachedNodeData {
 	pointCount: number
 	geometry?: THREE.BufferGeometry
 	points?: THREE.Points
+	/** Shared materials are owned by the layer and disposed once with it. */
+	sharedMaterial?: boolean
 	materialConfig: {
 		pointSize: number
 		depthTest: boolean
@@ -31,8 +33,8 @@ export class CacheManager {
 
 	constructor(options: CacheManagerOptions = {}) {
 		this.options = {
-			maxNodes: options.maxNodes ?? 100,
-			maxMemoryBytes: options.maxMemoryBytes ?? 100 * 1024 * 1024,
+			maxNodes: options.maxNodes ?? Infinity,
+			maxMemoryBytes: options.maxMemoryBytes ?? 256 * 1024 * 1024,
 			debug: options.debug ?? false,
 		}
 	}
@@ -58,7 +60,7 @@ export class CacheManager {
 			this.cache.delete(nodeId)
 		}
 
-		this.ensureCacheLimits(nodeData.sizeBytes, protectedNodes)
+		this.ensureCacheLimits(nodeData.sizeBytes, 1, protectedNodes)
 
 		nodeData.lastAccessed = Date.now()
 		this.cache.set(nodeId, nodeData)
@@ -100,7 +102,12 @@ export class CacheManager {
 		protectedNodes?: Set<string>,
 	): void {
 		Object.assign(this.options, newOptions)
-		this.ensureCacheLimits(0, protectedNodes)
+		this.ensureCacheLimits(0, 0, protectedNodes)
+	}
+
+	/** Release old nodes after the view changes, while retaining the current working set. */
+	trim(protectedNodes: Set<string>): void {
+		this.ensureCacheLimits(0, 0, protectedNodes)
 	}
 
 	getCachedNodeIds(): string[] {
@@ -152,10 +159,11 @@ export class CacheManager {
 
 	private ensureCacheLimits(
 		newItemSize: number,
+		incomingCount: number,
 		protectedNodes?: Set<string>,
 	): void {
 		while (
-			this.cache.size >= this.options.maxNodes ||
+			this.cache.size + incomingCount > this.options.maxNodes ||
 			this.memoryUsage + newItemSize > this.options.maxMemoryBytes
 		) {
 			if (this.cache.size === 0) break
@@ -169,12 +177,9 @@ export class CacheManager {
 				}
 			}
 
-			if (!lruNodeId) {
-				this.log(
-					'Warning: Cannot evict any nodes - all are protected. Cache limit exceeded.',
-				)
-				break
-			}
+			// Active nodes are pinned. Exceeding the budget temporarily is preferable
+			// to evicting and immediately downloading the same visible chunk again.
+			if (!lruNodeId) break
 
 			this.delete(lruNodeId)
 		}
@@ -182,7 +187,7 @@ export class CacheManager {
 
 	private disposeNodeResources(data: CachedNodeData): void {
 		data.geometry?.dispose()
-		if (data.points?.material instanceof THREE.Material) {
+		if (!data.sharedMaterial && data.points?.material instanceof THREE.Material) {
 			data.points.material.dispose()
 		}
 	}

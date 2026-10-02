@@ -1,38 +1,26 @@
 import { resolve } from 'node:path';
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig } from 'vite';
 import dts from 'vite-plugin-dts';
-
-function glslPlugin(): Plugin {
-	return {
-		name: 'glsl-loader',
-		transform(code, id) {
-			if (id.endsWith('.glsl')) {
-				return {
-					code: `export default ${JSON.stringify(code)}`,
-					map: null,
-				};
-			}
-		},
-	};
-}
+import { glslPlugin, lazPerfPlugin } from './build-plugins';
 
 export default defineConfig({
-	plugins: [glslPlugin(), dts({ rollupTypes: true })],
-	build: {
-		lib: {
-			entry: resolve('src/index.ts'),
-			formats: ['es'],
-			fileName: 'index',
-		},
-		assetsInlineLimit: 300000,
-		rollupOptions: {
-			external: ['maplibre-gl', 'three', 'copc', 'proj4'],
-		},
-	},
-	worker: {
-		format: 'es',
-	},
-	test: {
-		exclude: ['vendor/**', 'node_modules/**'],
-	},
+  plugins: [glslPlugin(), lazPerfPlugin(), dts({ rollupTypes: true })],
+  build: {
+    lib: {
+      entry: resolve('src/index.ts'),
+      formats: ['es'],
+      fileName: 'index',
+    },
+    assetsInlineLimit: 300000,
+    rollupOptions: {
+      external: ['maplibre-gl', 'three', 'proj4'],
+    },
+  },
+  worker: {
+    format: 'es',
+    plugins: () => [lazPerfPlugin()],
+  },
+  test: {
+    exclude: ['vendor/**', 'node_modules/**'],
+  },
 });

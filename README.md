@@ -1,19 +1,19 @@
 # maplibre-copc-layer
 
 [![npm version](https://img.shields.io/npm/v/maplibre-copc-layer)](https://www.npmjs.com/package/maplibre-copc-layer)
-[![license](https://img.shields.io/npm/l/maplibre-copc-layer)](https://github.com/spatialty-io/maplibre-copc-layer/blob/main/LICENSE)
+[![license](https://img.shields.io/npm/l/maplibre-copc-layer)](https://github.com/Kanahiro/maplibre-copc-layer/blob/main/LICENSE)
 
 A [MapLibre GL JS](https://maplibre.org/) custom layer for streaming and rendering [Cloud-Optimized Point Cloud (COPC)](https://copc.io/) data, powered by [Three.js](https://threejs.org/).
 
-Only the tiles visible on screen are fetched via SSE-based LOD, enabling smooth visualization of massive point clouds in the browser.
+The layer reads COPC hierarchy pages and LAZ chunks with HTTP byte-range requests. A view-frustum test skips off-screen branches, screen-space error selects an octree level of detail, and node requests are limited to six at a time.
 
 **[Live Demo](https://maplibre-copc-layer.spatialty.workers.dev/?copc=https%3A%2F%2Fgsvrg.ipri.aist.go.jp%2F3ddb-pds%2Fcopc%2F114112.copc.laz#17.95/35.657894/139.746455/-83.4/60)**
 
 ## Features
 
-- **Streaming LOD** — Screen-space error based level-of-detail fetches only what you see
+- **Streaming LOD** — Frustum culling and screen-space error select point density as the camera moves
 - **Web Worker** — COPC decoding and coordinate reprojection run off the main thread
-- **LRU cache** — Configurable node count and memory limits
+- **LRU cache** — Configurable node and memory budgets, with visible nodes pinned
 - **Ambient Occlusion** — SSAO post-processing for depth perception
 - **Color modes** — RGB, height ramp, intensity, classification, and white
 - **Custom color expressions** — User-defined linear/discrete color ramps for height and intensity
@@ -63,16 +63,17 @@ map.on('load', () => map.addLayer(layer));
 | `intensityColor` | `ColorExpression` | auto | Color ramp for intensity mode. Default: black→white (0–1) |
 | `classificationColors` | `Record<number, RGBColor>` | ASPRS defaults | Classification code colors (0–1 RGB) |
 | `filter` | `PointFilter` | `{}` | Filter points by classification, intensity range, or bounding box |
-| `alwaysShowRoot` | `boolean` | `false` | Always show root node even when SSE is below threshold |
+| `alwaysShowRoot` | `boolean` | `false` | Bypass frustum culling for the root node; visible ancestors are rendered with their descendants regardless of this setting |
 | `sseThreshold` | `number` | `8` | SSE threshold for LOD — lower loads more detail |
 | `depthTest` | `boolean` | `true` | Enable depth testing |
-| `maxCacheSize` | `number` | `100` | Max cached nodes |
-| `maxCacheMemory` | `number` | `104857600` | Max cache memory in bytes (100 MB) |
+| `maxCacheSize` | `number` | `Infinity` | Optional node-count limit; cached bytes are the default constraint |
+| `maxCacheMemory` | `number` | `268435456` | Byte budget for cached nodes (256 MB), enforced when admitting new nodes; the active view may exceed it |
 | `enableSSAO` | `boolean` | `false` | Enable Screen Space Ambient Occlusion |
 | `ssaoStrength` | `number` | `1.0` | SSAO effect strength |
 | `ssaoRadius` | `number` | `8.0` | SSAO sampling radius in pixels |
 | `debug` | `boolean` | `false` | Enable debug logging |
-| `onInitialized` | `(msg) => void` | — | Called with `{ nodeCount, bounds }` after COPC header loads. `bounds` contains `minx/maxx/miny/maxy/minz/maxz` in WGS84 |
+| `onInitialized` | `(msg) => void` | — | Called with `{ nodeCount, bounds }` after the initial hierarchy page loads. `nodeCount` counts nodes discovered so far; `bounds` contains `minx/maxx/miny/maxy/minz/maxz` in WGS84 |
+| `onError` | `(message) => void` | — | Called when initialization, a hierarchy page, or a point chunk fails to load |
 
 ### Methods
 
@@ -177,10 +178,23 @@ const layer = new CopcLayer('https://example.com/pointcloud.copc.laz', {
 ## Development
 
 ```bash
+git submodule update --init --recursive
 pnpm install
 pnpm dev       # Dev server with demo app
 pnpm test      # Run tests
 pnpm build     # Build library
+```
+
+The Cloudflare Workers demo uses Static Assets from `demo/`. In Workers Builds, use
+`pnpm build:demo` as the build command. `npx wrangler versions upload` uploads a
+preview version; `npx wrangler deploy` publishes it to production.
+
+The package has no `copc` or `laz-perf` npm dependency. COPC metadata and point records are read by the worker; LAZ chunks are decoded by the vendored `laz-perf` WebAssembly build, which is bundled into `dist`. Building from source requires the Git submodule above. The COPC server must support HTTP `206 Partial Content` and allow cross-origin Range requests. Point formats 6, 7, and 8 are supported.
+
+The optional live integration test reads the public demo file and needs network access:
+
+```bash
+RUN_LIVE_COPC=1 pnpm exec vitest run tests/live-copc.test.ts
 ```
 
 ## Third-Party Notices

@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import { CacheManager, type CachedNodeData } from '../src/cache-manager'
+import * as THREE from 'three'
 
 function createMockNodeData(
 	nodeId: string,
@@ -19,6 +20,11 @@ function createMockNodeData(
 }
 
 describe('CacheManager', () => {
+	test('defaults to a byte budget rather than evicting many small nodes by count', () => {
+		const cache = new CacheManager()
+		for (let i = 0; i < 120; i++) cache.set(createMockNodeData(`node-${i}`, 1024))
+		expect(cache.size()).toBe(120)
+	})
 	test('get returns null for non-existent node', () => {
 		const cache = new CacheManager()
 		expect(cache.get('0-0-0-0')).toBeNull()
@@ -59,6 +65,21 @@ describe('CacheManager', () => {
 
 		cache.clear()
 		expect(cache.size()).toBe(0)
+	})
+
+	test('evicting a node keeps a shared material alive', () => {
+		const cache = new CacheManager({ maxNodes: 1 })
+		const material = new THREE.PointsMaterial()
+		const dispose = vi.spyOn(material, 'dispose')
+		const first = createMockNodeData('first')
+		first.geometry = new THREE.BufferGeometry()
+		const geometryDispose = vi.spyOn(first.geometry, 'dispose')
+		first.points = new THREE.Points(first.geometry, material)
+		first.sharedMaterial = true
+		cache.set(first)
+		cache.set(createMockNodeData('second'))
+		expect(geometryDispose).toHaveBeenCalledOnce()
+		expect(dispose).not.toHaveBeenCalled()
 	})
 
 	test('evicts LRU node when maxNodes exceeded', () => {
@@ -125,6 +146,38 @@ describe('CacheManager', () => {
 		expect(cache.has('node-1')).toBe(true)
 		expect(cache.has('node-2')).toBe(false)
 		expect(cache.has('node-3')).toBe(true)
+	})
+
+	test('updating an unchanged limit keeps a full cache', () => {
+		const cache = new CacheManager({ maxNodes: 2 })
+		cache.set(createMockNodeData('a'))
+		cache.set(createMockNodeData('b'))
+		cache.updateOptions({ maxNodes: 2 })
+		expect(cache.getCachedNodeIds()).toEqual(['a', 'b'])
+	})
+
+	test('keeps a visible working set when it exceeds the cache budget', () => {
+		const cache = new CacheManager({ maxNodes: 2 })
+		cache.set(createMockNodeData('a'))
+		cache.set(createMockNodeData('b'))
+		const active = new Set(['a', 'b', 'c'])
+		cache.set(createMockNodeData('c'), active)
+		expect(cache.size()).toBe(3)
+		expect(cache.getCachedNodeIds()).toEqual(['a', 'b', 'c'])
+		cache.trim(new Set(['b', 'c']))
+		expect(cache.size()).toBe(2)
+		expect(cache.has('a')).toBe(false)
+		expect(cache.has('c')).toBe(true)
+	})
+
+	test('does not evict active nodes to meet the memory budget', () => {
+		const cache = new CacheManager({ maxMemoryBytes: 2048 })
+		cache.set(createMockNodeData('a', 1024))
+		cache.set(createMockNodeData('b', 1024))
+		cache.set(createMockNodeData('c', 1024), new Set(['a', 'b', 'c']))
+		expect(cache.size()).toBe(3)
+		cache.trim(new Set(['b', 'c']))
+		expect(cache.getCachedNodeIds()).toEqual(['b', 'c'])
 	})
 })
 

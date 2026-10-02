@@ -81,6 +81,7 @@ function buildColorExpression(
 // --- State ---
 
 const params = new URLSearchParams(window.location.search);
+const hasInitialView = Boolean(window.location.hash);
 
 const state = {
 	url: params.get('copc') ?? '',
@@ -254,16 +255,17 @@ function loadCopc() {
 		ssaoStrength: state.ssaoStrength,
 		ssaoRadius: state.ssaoRadius,
 		debug: true,
-		alwaysShowRoot: true,
 		onInitialized: (message) => {
 			const { bounds } = message;
-			map.flyTo({
-				center: [
-					(bounds.minx + bounds.maxx) / 2,
-					(bounds.miny + bounds.maxy) / 2,
-				],
-				zoom: 16,
-			});
+			if (!hasInitialView) {
+				map.flyTo({
+					center: [
+						(bounds.minx + bounds.maxx) / 2,
+						(bounds.miny + bounds.maxy) / 2,
+					],
+					zoom: 16,
+				});
+			}
 			setupBboxSliders(bounds);
 			if (heightColorState.stops.length === 0) {
 				heightColorState.stops = [
@@ -285,7 +287,8 @@ function loadCopc() {
 // --- GUI ---
 
 const guiContainer = document.createElement('div');
-guiContainer.style.cssText = 'position:absolute;top:0;left:0;z-index:1000;';
+guiContainer.style.cssText =
+	'position:absolute;top:0;left:0;z-index:1000;max-height:100vh;overflow-y:auto;';
 document.body.appendChild(guiContainer);
 
 const gui = new GUI({ title: 'COPC Viewer', container: guiContainer });
